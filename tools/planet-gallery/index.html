@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Delta-V — seed gallery</title>
+<style>
+  :root {
+    --void: #090b10;
+    --hull: #12161e;
+    --hairline: #2a3442;
+    --paper: #ede7da;
+    --muted: #8b94a3;
+    --ember: #ff8a3d;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--void);
+    color: var(--paper);
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    padding: 18px 24px 14px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  h1 {
+    margin: 0;
+    font-size: 13px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  h1 span { color: var(--ember); }
+  .sub { color: var(--muted); letter-spacing: 0.08em; }
+  main { padding: 24px; display: grid; gap: 28px; }
+
+  .panel {
+    background: var(--hull);
+    border: 1px solid var(--hairline);
+    padding: 18px 20px;
+    display: flex;
+    gap: 28px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .label {
+    color: var(--muted);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-size: 10px;
+  }
+
+  .preview { display: flex; gap: 28px; align-items: center; }
+  .sizes { display: flex; gap: 20px; align-items: flex-end; }
+
+  .controls {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px 28px;
+    flex: 1;
+    min-width: 320px;
+  }
+  .control { display: grid; gap: 6px; }
+  .control input[type="range"] { width: 100%; accent-color: var(--ember); }
+  .control .val { color: var(--paper); }
+  input[type="text"] {
+    background: var(--void);
+    border: 1px solid var(--hairline);
+    color: var(--paper);
+    font: inherit;
+    padding: 7px 10px;
+    width: 220px;
+  }
+  input[type="text"]:focus { outline: 1px solid var(--ember); border-color: var(--ember); }
+  button {
+    background: transparent;
+    border: 1px solid var(--hairline);
+    color: var(--paper);
+    font: inherit;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-size: 10px;
+    padding: 8px 14px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--ember); color: var(--ember); }
+  button:focus-visible { outline: 1px solid var(--ember); outline-offset: 2px; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 20px;
+  }
+  .cell {
+    display: grid;
+    justify-items: center;
+    gap: 8px;
+    padding: 14px 8px;
+    border: 1px solid transparent;
+  }
+  .cell:hover { border-color: var(--hairline); }
+  .cell .seed { color: var(--muted); letter-spacing: 0.06em; }
+  .cell:hover .seed { color: var(--ember); }
+  canvas { display: block; }
+
+  .checks { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; }
+  .checks label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Delta<span>-</span>V &nbsp;/&nbsp; seed gallery</h1>
+  <span class="sub">deterministic recipe tuning — same seed, same planet, forever</span>
+</header>
+<main>
+  <section class="panel">
+    <div class="preview">
+      <canvas id="hero" width="220" height="220"></canvas>
+      <div>
+        <div class="label">seed</div>
+        <input id="seed" type="text" value="spawnpoint" spellcheck="false" />
+        <div class="sizes" style="margin-top:16px">
+          <div><canvas id="s96" width="96" height="96"></canvas><div class="label" style="margin-top:6px">96</div></div>
+          <div><canvas id="s48" width="48" height="48"></canvas><div class="label" style="margin-top:6px">48</div></div>
+          <div><canvas id="s24" width="24" height="24"></canvas><div class="label" style="margin-top:6px">24</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="control">
+        <div class="label">saturation <span class="val" id="satVal"></span></div>
+        <input id="sat" type="range" min="0.25" max="0.85" step="0.05" value="0.55" />
+      </div>
+      <div class="control">
+        <div class="label">bands <span class="val" id="bandsVal"></span></div>
+        <input id="bands" type="range" min="0" max="6" step="1" value="0" />
+      </div>
+      <div class="control">
+        <div class="label">blobs <span class="val" id="blobsVal"></span></div>
+        <input id="blobs" type="range" min="0" max="5" step="1" value="0" />
+      </div>
+      <div class="control">
+        <div class="label">cloud streaks <span class="val" id="streaksVal"></span></div>
+        <input id="streaks" type="range" min="0" max="3" step="1" value="3" />
+      </div>
+      <div class="control">
+        <div class="label">ring chance <span class="val" id="ringVal"></span></div>
+        <input id="ringChance" type="range" min="0" max="1" step="0.05" value="0.35" />
+      </div>
+      <div class="checks">
+        <label><input id="forceRing" type="checkbox" /> force ring</label>
+        <button id="randomize">randomize seeds</button>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="label" style="margin-bottom:14px">planet seed set</div>
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <section>
+    <div class="label" style="margin-bottom:14px">lander seed set — same recipe, vehicle shapes</div>
+    <div class="panel" style="margin-bottom:20px">
+      <div class="preview">
+        <canvas id="lhero" width="220" height="220"></canvas>
+        <div>
+          <div class="label">seed</div>
+          <input id="lseed" type="text" value="claude" spellcheck="false" />
+          <div class="sizes" style="margin-top:16px">
+            <div><canvas id="l96" width="96" height="96"></canvas><div class="label" style="margin-top:6px">96</div></div>
+            <div><canvas id="l48" width="48" height="48"></canvas><div class="label" style="margin-top:6px">48</div></div>
+            <div><canvas id="l24" width="24" height="24"></canvas><div class="label" style="margin-top:6px">24</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="grid" id="lgrid"></div>
+  </section>
+</main>
+
+<script src="planetGen.js"></script>
+<script src="landerGen.js"></script>
+<script>
+  const PLANET_SETS = [
+    ['spawnpoint', 'dotfiles', 'infra', 'api-gateway', 'dotmatrix', 'lancedb-ingest',
+     'web-studio', 'nebula-ui', 'scripts', 'ml-pipeline', 'homepage', 'chip-emu',
+     'obsidian-sync', 'terraform-aws', 'cli-toolkit', 'blog'],
+    ['delta-v-core', 'terminal-plex', 'orbital-mechs', 'moon-base', 'telemetry',
+     'star-chart', 'lander-hud', 'mission-log', 'flight-plan', 'payload-db',
+     'rover-firmware', 'signal-decoder', 'atlas-map', 'quartz-site', 'drift-sim',
+     'vintage-radio'],
+    ['k8s-operator', 'rust-playground', 'notes', 'expense-tracker', 'shader-lab',
+     'dotfiles-old', 'design-system', 'chat-app', 'weather-station', 'keyboard-fw',
+     'recipe-box', 'stock-ticker', 'homelab', 'portfolio-2026', 'vim-config',
+     'static-site']
+  ]
+  const LANDER_SETS = [
+    ['claude', 'codex', 'gemini', 'opencode', 'aider', 'goose', 'cursor-agent',
+     'copilot', 'amp', 'crush', 'droid', 'jules', 'qwen-code', 'warp', 'mods', 'fabric'],
+    ['codex-mini', 'claude-opus', 'gemini-pro', 'openhands', 'smol-agent', 'gpt-engineer',
+     'swe-agent', 'void', 'tabby', 'continue', 'refact', 'phind', 'mentat', 'kodu',
+     'rowboat', 'pie']
+  ]
+  let setIndex = 0
+
+  const $ = (id) => document.getElementById(id)
+
+  function opts() {
+    return {
+      sat: parseFloat($('sat').value),
+      bands: parseInt($('bands').value, 10) || null,
+      blobs: parseInt($('blobs').value, 10) || null,
+      streaks: parseInt($('streaks').value, 10),
+      ringChance: parseFloat($('ringChance').value),
+      ring: $('forceRing').checked ? true : null
+    }
+  }
+
+  function buildGrid(container, seeds, onPick) {
+    container.innerHTML = ''
+    for (const seed of seeds) {
+      const cell = document.createElement('div')
+      cell.className = 'cell'
+      const canvas = document.createElement('canvas')
+      canvas.width = canvas.height = 96
+      canvas.dataset.seed = seed
+      const label = document.createElement('div')
+      label.className = 'seed'
+      label.textContent = seed
+      cell.append(canvas, label)
+      cell.addEventListener('click', () => {
+        onPick(seed)
+        renderAll()
+      })
+      container.appendChild(cell)
+    }
+  }
+
+  function renderAll() {
+    const o = opts()
+    for (const id of ['hero', 's96', 's48', 's24']) {
+      PlanetGen.drawPlanet($(id), $('seed').value || 'delta-v', o)
+    }
+    document.querySelectorAll('#grid canvas').forEach((c) => {
+      PlanetGen.drawPlanet(c, c.dataset.seed, o)
+    })
+    LanderGen.drawLander($('lhero'), $('lseed').value || 'claude', o)
+    for (const id of ['l96', 'l48', 'l24']) {
+      LanderGen.drawLander($(id), $('lseed').value || 'claude', o)
+    }
+    document.querySelectorAll('#lgrid canvas').forEach((c) => {
+      LanderGen.drawLander(c, c.dataset.seed, o)
+    })
+    $('satVal').textContent = o.sat.toFixed(2)
+    $('bandsVal').textContent = o.bands || 'auto'
+    $('blobsVal').textContent = o.blobs || 'auto'
+    $('streaksVal').textContent = o.streaks === 3 ? 'auto (0-2)' : o.streaks
+    $('ringVal').textContent = Math.round(o.ringChance * 100) + '%'
+  }
+
+  function renderGrids() {
+    buildGrid($('grid'), PLANET_SETS[setIndex % PLANET_SETS.length], (s) => ($('seed').value = s))
+    buildGrid($('lgrid'), LANDER_SETS[setIndex % LANDER_SETS.length], (s) => ($('lseed').value = s))
+    renderAll()
+  }
+
+  for (const id of ['sat', 'bands', 'blobs', 'streaks', 'ringChance', 'forceRing']) {
+    $(id).addEventListener('input', renderAll)
+  }
+  $('seed').addEventListener('input', renderAll)
+  $('lseed').addEventListener('input', renderAll)
+  $('randomize').addEventListener('click', () => {
+    setIndex++
+    renderGrids()
+  })
+
+  renderGrids()
+</script>
+</body>
+</html>
