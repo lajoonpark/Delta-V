@@ -12,13 +12,19 @@ asarUnpack:
 artifactName: ${productName}-${version}-mac-${arch}.${ext}
 mac:
   category: public.app-category.developer-tools
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
   target:
     - target: dmg
       arch:
         - arm64
-  identity: null
-  hardenedRuntime: false
-  gatekeeperAssess: false
+  # Code signing: provide a Developer ID Application certificate via
+  # CSC_LINK (base64 .p12) + CSC_KEY_PASSWORD. Without it the build falls
+  # back to ad-hoc signing (local dev only — Gatekeeper will reject it).
+  # Notarization runs automatically when APPLE_API_KEY / APPLE_API_KEY_ID /
+  # APPLE_API_ISSUER (or APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD /
+  # APPLE_TEAM_ID) are set. See .github/workflows/release.yml.
 win:
   target:
     - nsis

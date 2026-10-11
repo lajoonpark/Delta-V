@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-mac:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      # Signing + notarization credentials (all repo secrets):
+      #   APPLE_CERTIFICATE_BASE64 / APPLE_CERTIFICATE_PASSWORD
+      #     Developer ID Application .p12 (base64) — electron-builder reads
+      #     these as CSC_LINK / CSC_KEY_PASSWORD automatically.
+      #   APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID
+      #     Notarization via notarytool. Without signing, the app is
+      #     ad-hoc signed and Gatekeeper reports it as "damaged" on
+      #     other Macs — no right-click workaround.
+      - name: Build and publish DMG
+        env:
+          CSC_LINK: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run dist:mac -- --publish always
+
+  release-win-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build Windows + Linux
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-vite build && npx electron-builder --win --linux --publish always

@@ -347,6 +347,14 @@ npm install
 - Check write permissions on userData folder
 - Run `npm run dev` and open DevTools → Console for `electron-store` errors
 
+### "SpawnPoint is damaged and can't be opened" (macOS)
+- This is Gatekeeper rejecting an **unsigned / ad-hoc signed** app. Unlike the usual "unidentified developer" warning, it has no Open Anyway bypass.
+- **Immediate workaround** for the downloaded DMG (until a signed release ships):
+```bash
+xattr -dr com.apple.quarantine /Applications/SpawnPoint.app
+```
+- **Proper fix**: sign with a Developer ID Application certificate and notarize (see Packaging Details). Releases built without `APPLE_CERTIFICATE_BASE64` secrets are ad-hoc signed and will trigger this on other Macs.
+
 ### Scan shows 0 repos
 - Root folder must contain **immediate subdirectories** (not files)
 - Hidden folders (starting with `.`) and common noise (`node_modules`, `.git`, etc.) are ignored
@@ -388,9 +396,12 @@ npm run dev
 ### macOS (DMG)
 - `appId: com.spawnpoint.app`
 - Category: `public.app-category.developer-tools`
-- Universal/ARM64 only (Intel deprecated)
-- `hardenedRuntime: false` (node-pty needs unsigned binaries)
-- `gatekeeperAssess: false` (for local testing)
+- ARM64 only (Intel deprecated)
+- `hardenedRuntime: true` with entitlements in `build/entitlements.mac.plist` (+ inherit variant for helpers) — required for notarization; `disable-library-validation` covers node-pty/LanceDB native binaries
+- **Signing + notarization** (required for Gatekeeper to accept the app on other Macs):
+  - Needs Apple Developer Program membership ($99/yr) + a Developer ID Application certificate
+  - CI (`.github/workflows/release.yml`) signs via `APPLE_CERTIFICATE_BASE64` / `APPLE_CERTIFICATE_PASSWORD` secrets (electron-builder `CSC_LINK` / `CSC_KEY_PASSWORD`) and notarizes via `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`
+  - Local `npm run dist:mac` without those env vars produces an ad-hoc signed build — runs on your Mac, shows "damaged" on anyone else's
 
 ### Windows (NSIS)
 - Standard installer with uninstaller
