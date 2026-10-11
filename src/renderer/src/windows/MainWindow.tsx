@@ -109,7 +109,7 @@ export function MainWindow(): React.ReactElement {
             <IconButton label="Add root folder" onClick={() => void addFolders()}>
               <Plus size={14} />
             </IconButton>
-            <IconButton label="Rescan folders" onClick={() => void window.spawnpoint.scanAllFolders()}>
+            <IconButton label="Rescan folders" onClick={() => void window.deltav.scanAllFolders()}>
               <RefreshCw size={14} className={isScanning ? 'animate-spin' : ''} />
             </IconButton>
           </div>

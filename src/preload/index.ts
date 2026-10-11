@@ -1,12 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '@shared/ipc'
-import type { SpawnPointApi } from '@shared/api'
+import type { DeltaVApi } from '@shared/api'
 import type { Result } from '@shared/types'
 
 /**
  * Secure preload bridge.
  *
- * Exposes exactly one object on `window.spawnpoint`, typed as `SpawnPointApi`
+ * Exposes exactly one object on `window.deltav`, typed as `DeltaVApi`
  * (see src/shared/api.ts — the complete contract the renderer needs).
  *
  * contextIsolation is on, nodeIntegration is off — the renderer never
@@ -34,13 +34,13 @@ const EVENT_CHANNELS = new Set<string>([
 
 function on(channel: string, cb: (payload: unknown) => void): () => void {
   if (!EVENT_CHANNELS.has(channel)) {
-    throw new Error(`[spawnpoint] channel not whitelisted: ${channel}`)
+    throw new Error(`[deltav] channel not whitelisted: ${channel}`)
   }
   const handler = (_e: Electron.IpcRendererEvent, payload: unknown): void => {
     try {
       cb(payload)
     } catch (err) {
-      console.error(`[spawnpoint] listener error on ${channel}:`, err)
+      console.error(`[deltav] listener error on ${channel}:`, err)
     }
   }
   ipcRenderer.on(channel, handler)
@@ -60,7 +60,7 @@ function unwrap<T>(p: Promise<Result<T>>): Promise<T> {
   })
 }
 
-const api: SpawnPointApi = {
+const api: DeltaVApi = {
   // ── settings ──────────────────────────────────────────────────────────
   getSettings: () => unwrap(ipcRenderer.invoke(IPC.settingsGet)),
   setSettings: (partial) => unwrap(ipcRenderer.invoke(IPC.settingsSet, partial)),
@@ -122,4 +122,4 @@ const api: SpawnPointApi = {
   onIndexComplete: (cb) => on(IPC.indexComplete, (p) => cb(p as never))
 }
 
-contextBridge.exposeInMainWorld('spawnpoint', api)
+contextBridge.exposeInMainWorld('deltav', api)

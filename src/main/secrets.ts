@@ -8,7 +8,7 @@ import Store from 'electron-store'
  * and never leave the main process — the renderer only ever receives
  * `SECRET_MASK`. Backed by Electron's `safeStorage` (Keychain on macOS, DPAPI
  * on Windows, libsecret/kwallet on Linux) and persisted to
- * `spawnpoint-secrets.json`.
+ * `deltav-secrets.json`.
  *
  * If the OS provides no encryption backend, values are stored unencrypted and
  * `isEncryptionAvailable()` reports false so the UI can warn the user rather
@@ -41,7 +41,7 @@ class SecretsService {
     this.ready = true
     this.encryptionAvailable = safeStorage.isEncryptionAvailable()
     this.store = new Store<SecretsFile>({
-      name: 'spawnpoint-secrets',
+      name: 'deltav-secrets',
       defaults: { encrypted: false, data: '' }
     })
     this.map = this.decode(this.store.store as SecretsFile)

@@ -20,14 +20,14 @@ import type {
 } from './types'
 
 /**
- * The typed API exposed to the renderer on `window.spawnpoint`.
+ * The typed API exposed to the renderer on `window.deltav`.
  *
  * This is the complete surface the UI (design agent) needs — nothing else
  * should be accessed. All methods return promises; all main→renderer events
  * are delivered through the `on*` subscription methods, which return an
  * unsubscribe function.
  */
-export interface SpawnPointApi {
+export interface DeltaVApi {
   // ── settings ──────────────────────────────────────────────────────────
   /**
    * All settings. Secret custom-agent env values are returned as `SECRET_MASK`

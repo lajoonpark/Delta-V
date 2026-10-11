@@ -271,7 +271,7 @@ export interface AppActions {
   updateSettings(partial: Partial<AppSettings>): Promise<void>
   resetSettings(): Promise<void>
   saveAgent(agent: AgentDefinition): Promise<void>
-  addAgent(payload: Parameters<typeof window.spawnpoint.addAgent>[0]): Promise<AgentDefinition>
+  addAgent(payload: Parameters<typeof window.deltav.addAgent>[0]): Promise<AgentDefinition>
   deleteAgent(id: string): Promise<void>
   toggleBuiltinAgent(id: string, disabled: boolean): Promise<void>
   /** Change the tab-label prefix for any agent (persisted in settings). */
@@ -322,7 +322,7 @@ export function AppProvider({ children }: { children: ReactNode }): React.ReactE
   const buffer = useRef(new OutputBuffer())
 
   useEffect(() => {
-    const api = window.spawnpoint
+    const api = window.deltav
     let disposed = false
 
     const fetchSettings = (): Promise<void> =>
@@ -410,7 +410,7 @@ export function AppProvider({ children }: { children: ReactNode }): React.ReactE
   }, [])
 
   const actions = useMemo<AppActions>(() => {
-    const api = window.spawnpoint
+    const api = window.deltav
     const refreshAll = async (): Promise<void> => {
       await Promise.all([
         api.getSettings().then((settings) => dispatch({ type: 'settings', settings })),

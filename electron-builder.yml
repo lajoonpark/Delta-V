@@ -1,5 +1,5 @@
-appId: com.spawnpoint.app
-productName: SpawnPoint
+appId: com.deltav.app
+productName: Delta-V
 directories:
   buildResources: build
   output: dist

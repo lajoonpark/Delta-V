@@ -22,15 +22,15 @@ export interface AppSettings {
   repoIndexEnabled: boolean
   /**
    * agentId → letter(s) used as the prefix in default tab names
-   * (e.g. `K_spawnpoint` for Kilo on the spawnpoint repo). Empty/absent = built-in
+   * (e.g. `K_deltav` for Kilo on the deltav repo). Empty/absent = built-in
    * default or first letter of the agent name.
    */
   agentTabLabels: Record<string, string>
   /**
-   * When true (default), every spawned agent PTY inherits SpawnPoint's full
+   * When true (default), every spawned agent PTY inherits Delta-V's full
    * process environment. When false, only an allowlist of essential vars is
    * forwarded (PATH/HOME/TERM/LANG/XDG_*…), so secrets exported in the shell
-   * that launched SpawnPoint do not leak into agents. Note: shell-mode agents
+   * that launched Delta-V do not leak into agents. Note: shell-mode agents
    * still spawn a login+interactive shell, which re-sources ~/.zprofile and
    * ~/.zshrc — so the tightening is strongest for direct (useShell: false)
    * spawns.

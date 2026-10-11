@@ -141,7 +141,7 @@ class SettingsService {
 
   constructor() {
     this.store = new Store<StoredSettings>({
-      name: 'spawnpoint-settings',
+      name: 'deltav-settings',
       defaults: { ...DEFAULT_SETTINGS, __schemaVersion: SCHEMA_VERSION } as StoredSettings
     })
     // Migrate + sanitize whatever is on disk

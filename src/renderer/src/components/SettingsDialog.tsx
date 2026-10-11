@@ -275,7 +275,7 @@ function AgentsTab(): React.ReactElement {
 
   const onDropRow = (e: React.DragEvent, target: AgentDefinition, before: boolean): void => {
     e.preventDefault()
-    const id = dragId ?? e.dataTransfer.getData('text/spawnpoint-agent-id')
+    const id = dragId ?? e.dataTransfer.getData('text/deltav-agent-id')
     setDragId(null)
     setDropTarget(null)
     if (!id || id === target.id) return
@@ -289,7 +289,7 @@ function AgentsTab(): React.ReactElement {
     draggable: true,
     onDragStart: (e) => {
       setDragId(agent.id)
-      e.dataTransfer.setData('text/spawnpoint-agent-id', agent.id)
+      e.dataTransfer.setData('text/deltav-agent-id', agent.id)
       e.dataTransfer.effectAllowed = 'move'
     },
     onDragEnd: () => {
@@ -320,7 +320,7 @@ function AgentsTab(): React.ReactElement {
       <div>
         <SectionTitle
           title="Agents"
-          desc="Drag rows to reorder — the same order is used in the launch picker. Disable the built-ins you never use; edit the letter(s) shown in default tab names (e.g. K_spawnpoint)."
+          desc="Drag rows to reorder — the same order is used in the launch picker. Disable the built-ins you never use; edit the letter(s) shown in default tab names (e.g. K_deltav)."
         />
         <ul className="mt-2 divide-y divide-zinc-100 rounded-xl border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
           {agents.map((a) => (
@@ -419,7 +419,7 @@ function BuiltinLabelEditor({ agent }: { agent: AgentDefinition }): React.ReactE
       maxLength={8}
       spellCheck={false}
       aria-label={`Tab label for ${agent.name}`}
-      title="Tab label — letter(s) used in default tab names, e.g. K_spawnpoint"
+      title="Tab label — letter(s) used in default tab names, e.g. K_deltav"
       className="h-7 w-14 shrink-0 rounded-md border border-zinc-300 bg-white px-1.5 text-center font-mono text-xs text-zinc-700 transition-colors placeholder:text-zinc-400 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/25 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:placeholder:text-zinc-500"
     />
   )
@@ -705,9 +705,9 @@ function AdvancedTab({ onDone }: { onDone(): void }): React.ReactElement {
       <div className="rounded-xl border border-zinc-200 p-3.5 dark:border-zinc-800">
         <p className="text-[13px] font-medium text-zinc-800 dark:text-zinc-100">Storage</p>
         <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-400">
-          Settings live in <span className="font-mono">spawnpoint-settings.json</span> inside your
+          Settings live in <span className="font-mono">deltav-settings.json</span> inside your
           user data directory; agent secrets in the encrypted{' '}
-          <span className="font-mono">spawnpoint-secrets.json</span>; repo indexes in{' '}
+          <span className="font-mono">deltav-secrets.json</span>; repo indexes in{' '}
           <span className="font-mono">repo-index.lance</span>. Everything stays on this machine —
           no network calls, no telemetry.
         </p>
@@ -719,7 +719,7 @@ function AdvancedTab({ onDone }: { onDone(): void }): React.ReactElement {
             Pass launch environment to agents
           </p>
           <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-400">
-            When on, every agent inherits all variables from the shell that launched SpawnPoint. Turn
+            When on, every agent inherits all variables from the shell that launched Delta-V. Turn
             off to forward only essentials (PATH, HOME, locale…), so unrelated secrets in that
             shell stay out. Agents run in a login shell that re-sources your profile either way.
           </p>

@@ -64,7 +64,7 @@ export function Sidebar({
           onChange={(order) => void updateSettings({ sortOrder: order })}
         />
         <span className="flex-1" />
-        <IconButton label="Rescan folders" onClick={() => void window.spawnpoint.scanAllFolders()}>
+        <IconButton label="Rescan folders" onClick={() => void window.deltav.scanAllFolders()}>
           <RefreshCw size={13} className={isScanning ? 'animate-spin' : ''} />
         </IconButton>
         <IconButton label="Add root folder" onClick={() => void addFolders()}>

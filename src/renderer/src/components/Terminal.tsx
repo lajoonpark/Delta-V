@@ -134,16 +134,16 @@ export function TerminalView({
     const parsedOff = term.onWriteParsed(checkPainted)
 
     const offs = [
-      window.spawnpoint.onTerminalData(({ sessionId, data }) => {
+      window.deltav.onTerminalData(({ sessionId, data }) => {
         if (sessionId === session.id) term.write(data)
       }),
-      window.spawnpoint.onTerminalExit(({ sessionId, exitCode }) => {
+      window.deltav.onTerminalExit(({ sessionId, exitCode }) => {
         if (sessionId === session.id) {
           if (poll !== undefined) clearInterval(poll)
           onExitRef.current?.(exitCode)
         }
       }),
-      term.onData((data) => window.spawnpoint.terminalInput(session.id, data))
+      term.onData((data) => window.deltav.terminalInput(session.id, data))
     ]
 
     // Copy/paste with selection awareness (terminal-first, then default)
@@ -172,7 +172,7 @@ export function TerminalView({
       } catch {
         return // zero-size container (hidden tab)
       }
-      window.spawnpoint.terminalResize(session.id, t.cols, t.rows).catch(() => undefined)
+      window.deltav.terminalResize(session.id, t.cols, t.rows).catch(() => undefined)
     }
 
     const ro = new ResizeObserver(() => refit())
@@ -205,7 +205,7 @@ export function TerminalView({
     } catch {
       // hidden
     }
-    window.spawnpoint.terminalResize(session.id, term.cols, term.rows).catch(() => undefined)
+    window.deltav.terminalResize(session.id, term.cols, term.rows).catch(() => undefined)
   }, [fontSize, fontFamily, dark, session.id])
 
   // Refit when the tab becomes visible again
@@ -220,7 +220,7 @@ export function TerminalView({
       } catch {
         return
       }
-      window.spawnpoint.terminalResize(session.id, term.cols, term.rows).catch(() => undefined)
+      window.deltav.terminalResize(session.id, term.cols, term.rows).catch(() => undefined)
       term.focus()
     })
     return () => cancelAnimationFrame(raf)

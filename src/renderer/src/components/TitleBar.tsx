@@ -23,7 +23,7 @@ export function TitleBar({ onOpenSettings }: { onOpenSettings(): void }): React.
           <SpawnMark size={11} />
         </span>
         <span className="text-[13px] font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">
-          SpawnPoint
+          Delta-V
         </span>
       </div>
 

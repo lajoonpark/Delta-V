@@ -1,4 +1,4 @@
-# SpawnPoint
+# Delta-V
 
 <div align="center">
 
@@ -17,16 +17,16 @@
 
 ## Overview
 
-**SpawnPoint** is a cross-platform desktop application (macOS, Windows, Linux) that lets developers manage and launch terminal-based coding agents directly into their repositories.
+**Delta-V** is a cross-platform desktop application (macOS, Windows, Linux) that lets developers manage and launch terminal-based coding agents directly into their repositories.
 
-Point SpawnPoint at folders containing your projects, and it displays each immediate subfolder as a launchable tile. Click a tile, pick an agent (Kilo, OpenCode, Claude Code, Aider, or your own custom commands), and a live terminal opens already `cd`'d into that repo — ready to code.
+Point Delta-V at folders containing your projects, and it displays each immediate subfolder as a launchable tile. Click a tile, pick an agent (Kilo, OpenCode, Claude Code, Aider, or your own custom commands), and a live terminal opens already `cd`'d into that repo — ready to code.
 
 ---
 
 ## Features
 
 ### 🏗️ Repository Management
-- **Root folders** — Add one or more parent directories; SpawnPoint scans their immediate children as repos
+- **Root folders** — Add one or more parent directories; Delta-V scans their immediate children as repos
 - **Smart scanning** — Chunked, debounced, cancellable scans handle 10k+ folders without blocking the UI
 - **Flexible sorting** — Recently opened (default), alphabetical, or manual order
 - **Live progress** — Real-time scan progress badges on each root folder
@@ -55,7 +55,7 @@ Define your own agents with full control:
 - **xterm.js** — Full-featured terminal with 10k line scrollback
 - **Web links addon** — Clickable URLs, file paths, and stack traces
 - **Fit addon** — Automatic resize on window/tab changes
-- **OSC title detection** — Terminal title updates from agent output (e.g., `kilo @ spawnpoint`)
+- **OSC title detection** — Terminal title updates from agent output (e.g., `kilo @ deltav`)
 - **Graceful shutdown** — SIGTERM → 1s grace → SIGKILL on close/quit
 
 ### 🪟 Window Modes
@@ -128,8 +128,8 @@ Define your own agents with full control:
 ### Development
 ```bash
 # Clone and install
-git clone https://github.com/your-org/spawnpoint.git
-cd spawnpoint
+git clone https://github.com/your-org/deltav.git
+cd deltav
 npm install
 
 # Start dev servers (Vite + Electron)
@@ -162,7 +162,7 @@ npm run dist
 ## Project Structure
 
 ```
-spawnpoint/
+deltav/
 ├── .github/                    # CI workflows (if any)
 ├── build/                      # electron-builder assets (icons, etc.)
 ├── dist/                       # Packaged outputs (gitignored)
@@ -225,9 +225,9 @@ spawnpoint/
 
 ### Settings File
 Persisted to `electron-store` at:
-- **macOS**: `~/Library/Application Support/SpawnPoint/spawnpoint-settings.json`
-- **Windows**: `%APPDATA%/SpawnPoint/spawnpoint-settings.json`
-- **Linux**: `~/.config/SpawnPoint/spawnpoint-settings.json`
+- **macOS**: `~/Library/Application Support/Delta-V/deltav-settings.json`
+- **Windows**: `%APPDATA%/Delta-V/deltav-settings.json`
+- **Linux**: `~/.config/Delta-V/deltav-settings.json`
 
 ```json
 {
@@ -255,9 +255,9 @@ Persisted to `electron-store` at:
 
 ### Repo Indexes
 LanceDB database at:
-- **macOS**: `~/Library/Application Support/SpawnPoint/repo-index.lance/`
-- **Windows**: `%APPDATA%/SpawnPoint/repo-index.lance/`
-- **Linux**: `~/.config/SpawnPoint/repo-index.lance/`
+- **macOS**: `~/Library/Application Support/Delta-V/repo-index.lance/`
+- **Windows**: `%APPDATA%/Delta-V/repo-index.lance/`
+- **Linux**: `~/.config/Delta-V/repo-index.lance/`
 
 Each repo gets a table `repo_<tileId>` with columns: `path`, `startLine`, `endLine`, `lang`, `content`.
 
@@ -347,11 +347,11 @@ npm install
 - Check write permissions on userData folder
 - Run `npm run dev` and open DevTools → Console for `electron-store` errors
 
-### "SpawnPoint is damaged and can't be opened" (macOS)
+### "Delta-V is damaged and can't be opened" (macOS)
 - This is Gatekeeper rejecting an **unsigned / ad-hoc signed** app. Unlike the usual "unidentified developer" warning, it has no Open Anyway bypass.
 - **Immediate workaround** for the downloaded DMG (until a signed release ships):
 ```bash
-xattr -dr com.apple.quarantine /Applications/SpawnPoint.app
+xattr -dr com.apple.quarantine /Applications/Delta-V.app
 ```
 - **Proper fix**: sign with a Developer ID Application certificate and notarize (see Packaging Details). Releases built without `APPLE_CERTIFICATE_BASE64` secrets are ad-hoc signed and will trigger this on other Macs.
 
@@ -378,7 +378,7 @@ export const BUILTIN_AGENTS: CustomAgent[] = [
 2. Add handler in `src/main/ipc.ts` (use `wrap()` for error normalization)
 3. Expose in `src/preload/index.ts` via `contextBridge.exposeInMainWorld`
 4. Add TypeScript types in `src/shared/api.ts`
-5. Call from renderer via `window.spawnpoint.<channel>(...)`
+5. Call from renderer via `window.deltav.<channel>(...)`
 
 ### Debugging Main Process
 ```bash
@@ -394,7 +394,7 @@ npm run dev
 ## Packaging Details
 
 ### macOS (DMG)
-- `appId: com.spawnpoint.app`
+- `appId: com.deltav.app`
 - Category: `public.app-category.developer-tools`
 - ARM64 only (Intel deprecated)
 - `hardenedRuntime: true` with entitlements in `build/entitlements.mac.plist` (+ inherit variant for helpers) — required for notarization; `disable-library-validation` covers node-pty/LanceDB native binaries

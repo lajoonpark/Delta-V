@@ -119,7 +119,7 @@ function NoRepos({
       </h2>
       <p className="mt-1 max-w-sm text-[13px] leading-relaxed text-zinc-500 dark:text-zinc-400">
         {scanning
-          ? 'SpawnPoint is reading the immediate subfolders of your root folders.'
+          ? 'Delta-V is reading the immediate subfolders of your root folders.'
           : 'Subfolders of your root folders will appear here as launchable repos. Make sure your root folders actually contain project folders, or rescan.'}
       </p>
       {!scanning && (
@@ -139,10 +139,10 @@ export function Welcome({ onAddFolders }: { onAddFolders(): void }): React.React
         <SpawnMark size={30} />
       </div>
       <h1 className="mt-5 text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-        Welcome to SpawnPoint
+        Welcome to Delta-V
       </h1>
       <p className="mt-2 max-w-md text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
-        Point SpawnPoint at folders full of projects and launch your coding agents — kilo, Claude
+        Point Delta-V at folders full of projects and launch your coding agents — kilo, Claude
         Code, aider, OpenCode or your own commands — straight into any repo.
       </p>
 

@@ -1,9 +1,9 @@
 {
-  "name": "spawnpoint",
+  "name": "deltav",
   "version": "1.1.6",
   "description": "Repo terminal launcher for coding agents",
   "main": "./out/main/index.js",
-  "author": "SpawnPoint",
+  "author": "Delta-V",
   "private": true,
   "scripts": {
     "dev": "electron-vite dev",

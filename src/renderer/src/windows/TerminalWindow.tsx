@@ -28,7 +28,7 @@ export function TerminalWindow({
   useEffect(() => {
     let cancelled = false
     const tryFetch = async (attempt: number): Promise<void> => {
-      const found = (await window.spawnpoint.listSessions()).find((s) => s.id === sessionId)
+      const found = (await window.deltav.listSessions()).find((s) => s.id === sessionId)
       if (cancelled) return
       if (found) {
         setInfo(found)
@@ -45,7 +45,7 @@ export function TerminalWindow({
 
   // Live title updates (this window has no entry in the sessions reducer)
   useEffect(() => {
-    const off = window.spawnpoint.onTerminalTitle(({ sessionId: id, title }) => {
+    const off = window.deltav.onTerminalTitle(({ sessionId: id, title }) => {
       if (id === sessionId) setInfo((cur) => (cur ? { ...cur, title } : cur))
     })
     return off
@@ -92,7 +92,7 @@ export function TerminalWindow({
           type="button"
           aria-label="Close terminal"
           onClick={() => {
-            void killTerminal(sessionId).finally(() => void window.spawnpoint.closeWindow(windowId))
+            void killTerminal(sessionId).finally(() => void window.deltav.closeWindow(windowId))
           }}
           className="no-drag inline-flex h-6 w-6 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
         >
@@ -130,7 +130,7 @@ export function TerminalWindow({
             </p>
             <button
               type="button"
-              onClick={() => void window.spawnpoint.closeWindow(windowId)}
+              onClick={() => void window.deltav.closeWindow(windowId)}
               className="rounded-md px-2 py-1 text-[11px] font-medium text-amber-200 hover:bg-amber-900/50"
             >
               Close window

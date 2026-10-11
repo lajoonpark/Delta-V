@@ -62,7 +62,7 @@ class PtyManager extends EventEmitter {
     const cwd = agent.workingDirOverride || tile?.path || os.homedir()
 
     const sessionId = randomUUID()
-    // Default tab name: <agent label>_<repo>, e.g. K_spawnpoint (kilo on spawnpoint).
+    // Default tab name: <agent label>_<repo>, e.g. K_deltav (kilo on deltav).
     const title = `${agent.tabLabel}_${path.basename(cwd)}`
 
     const pty = this.spawnPty(agent, cwd)
@@ -133,7 +133,7 @@ class PtyManager extends EventEmitter {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const nodePty = require('node-pty') as typeof import('node-pty')
 
-    // By default every agent inherits SpawnPoint's full environment. When the user
+    // By default every agent inherits Delta-V's full environment. When the user
     // opts out, forward only the vars a CLI needs to find its runtime so any
     // secrets exported in the launching shell don't reach third-party agents.
     const inherited = settingsService.get().passLaunchEnvToAgents
@@ -271,7 +271,7 @@ class PtyManager extends EventEmitter {
     const title = extractOscTitle(session.titleState, data)
     if (title && title !== session.info.title) {
       // Ignore generic agent-name titles (e.g. "Kilo CLI") if we already have
-      // a descriptive title containing the repo name (e.g. "K_spawnpoint").
+      // a descriptive title containing the repo name (e.g. "K_deltav").
       // The initial title format is "<tabLabel>_<repo>", so it contains "_".
       // Agent names from BUILTIN_AGENTS don't contain "_".
       const agent = agentService.byId(session.info.agentId)

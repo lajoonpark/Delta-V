@@ -33,11 +33,11 @@ class WindowManager {
       height: isTerminal ? 760 : 860,
       minWidth: 480,
       minHeight: 360,
-      title: title ?? 'SpawnPoint',
+      title: title ?? 'Delta-V',
       titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
       trafficLightPosition: { x: 12, y: 12 },
       // Native tabbing for terminal windows on macOS
-      tabbingIdentifier: isTerminal ? 'spawnpoint-terminal' : undefined,
+      tabbingIdentifier: isTerminal ? 'deltav-terminal' : undefined,
       webPreferences: {
         preload: path.join(__dirname, '../preload/index.js'),
         contextIsolation: true,
