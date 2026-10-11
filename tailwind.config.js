@@ -23,7 +23,11 @@ module.exports = {
           'Menlo',
           'Consolas',
           ...defaultTheme.fontFamily.mono
-        ]
+        ],
+        // HUD / data plates (Martian Mono when bundled, mono fallback).
+        hud: ['"Martian Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+        // Wordmark + stage titles only (Michroma when bundled).
+        display: ['"Michroma"', '"Eurostile"', 'ui-sans-serif', 'system-ui', 'sans-serif']
       },
       colors: {
         // Signature accent — runway amber
@@ -31,7 +35,14 @@ module.exports = {
           DEFAULT: '#f59e0b',
           soft: '#fbbf24',
           dim: '#b45309'
-        }
+        },
+        // Space chrome tokens (mission-control instrument panel).
+        void: '#090B10',
+        hull: '#12161E',
+        hairline: '#2A3442',
+        paper: '#EDE7DA',
+        muted: '#8B94A3',
+        ember: '#FF8A3D'
       },
       boxShadow: {
         tile: '0 1px 2px rgb(0 0 0 / 0.06), 0 1px 3px rgb(0 0 0 / 0.1)',

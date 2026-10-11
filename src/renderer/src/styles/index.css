@@ -6,6 +6,14 @@
 
 :root {
   color-scheme: light dark;
+  /* Space chrome — mission-control instrument panel (always dark).
+     Fallbacks stand in for Michroma / Martian Mono until those are bundled. */
+  --void: #090b10;
+  --hull: #12161e;
+  --hairline: #2a3442;
+  --paper: #ede7da;
+  --muted: #8b94a3;
+  --ember: #ff8a3d;
 }
 
 html,

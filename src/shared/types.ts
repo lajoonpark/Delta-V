@@ -49,6 +49,23 @@ export interface AppSettings {
    */
   sidebarShortcut: string
   /**
+   * Orbit-view launcher shortcut (default ⌘O). When sessions are open this
+   * toggles the solar-system launcher overlay over the terminal; Esc returns.
+   * Same normalized grammar as the sidebar shortcut.
+   */
+  orbitShortcut: string
+  /**
+   * Shortcut that instantly finishes any in-flight view transition (damped
+   * zoom) instead of waiting it out. Same normalized grammar.
+   */
+  skipTransitionShortcut: string
+  /**
+   * View-transition duration in milliseconds (damped zooms). 0 disables
+   * motion entirely (cuts straight to end states). Reduced-motion OS setting
+   * also cuts to end states regardless of this value.
+   */
+  transitionDurationMs: number
+  /**
    * Main-process-populated status (never persisted, ignored on update): true
    * when the OS provides an encryption backend for the secrets store. The
    * renderer uses it to warn when agent secrets are stored unencrypted.
@@ -69,11 +86,20 @@ export const DEFAULT_SETTINGS: AppSettings = {
   agentTabLabels: {},
   passLaunchEnvToAgents: true,
   agentOrder: [],
-  sidebarShortcut: 'mod+b'
+  sidebarShortcut: 'mod+b',
+  orbitShortcut: 'mod+o',
+  skipTransitionShortcut: 'mod+shift+s',
+  transitionDurationMs: 800
 }
 
 /** Default sidebar toggle: ⌘B on macOS, Ctrl+B elsewhere (`mod` = primary). */
 export const DEFAULT_SIDEBAR_SHORTCUT = 'mod+b'
+/** Default orbit-view launcher toggle: ⌘O on macOS, Ctrl+O elsewhere. */
+export const DEFAULT_ORBIT_SHORTCUT = 'mod+o'
+/** Default skip-transition combo: ⌘⇧S on macOS, Ctrl+Shift+S elsewhere. */
+export const DEFAULT_SKIP_TRANSITION_SHORTCUT = 'mod+shift+s'
+/** Default damped-zoom transition duration (ms). */
+export const DEFAULT_TRANSITION_MS = 800
 
 // ── Sidebar shortcut helpers ─────────────────────────────────────────────
 

@@ -3,8 +3,11 @@ import {
   AppSettings,
   BUILTIN_AGENTS,
   CustomAgent,
+  DEFAULT_ORBIT_SHORTCUT,
   DEFAULT_SETTINGS,
   DEFAULT_SIDEBAR_SHORTCUT,
+  DEFAULT_SKIP_TRANSITION_SHORTCUT,
+  DEFAULT_TRANSITION_MS,
   isSecretKey,
   normalizeShortcut,
   Result,
@@ -20,7 +23,7 @@ import { secretsService } from './secrets'
  * and extend `migrations` so existing users upgrade transparently.
  */
 
-const SCHEMA_VERSION = 5
+const SCHEMA_VERSION = 6
 
 type StoredSettings = AppSettings & { __schemaVersion: number }
 
@@ -52,6 +55,15 @@ const migrations: Record<number, (prev: Record<string, unknown>) => StoredSettin
     const next = { ...DEFAULT_SETTINGS, ...(prev as object) } as StoredSettings
     next.agentOrder = []
     next.sidebarShortcut = DEFAULT_SIDEBAR_SHORTCUT
+    next.__schemaVersion = SCHEMA_VERSION
+    return next
+  },
+  // v5 → v6: added orbitShortcut + skipTransitionShortcut + transitionDurationMs
+  5: (prev) => {
+    const next = { ...DEFAULT_SETTINGS, ...(prev as object) } as StoredSettings
+    next.orbitShortcut = DEFAULT_ORBIT_SHORTCUT
+    next.skipTransitionShortcut = DEFAULT_SKIP_TRANSITION_SHORTCUT
+    next.transitionDurationMs = DEFAULT_TRANSITION_MS
     next.__schemaVersion = SCHEMA_VERSION
     return next
   }
@@ -103,7 +115,25 @@ function validate(settings: AppSettings): string[] {
   if (!Array.isArray(settings.agentOrder)) errors.push('agentOrder must be an array')
   if (typeof settings.sidebarShortcut !== 'string' || !normalizeShortcut(settings.sidebarShortcut))
     errors.push('sidebarShortcut must be a shortcut like mod+b')
+  if (typeof settings.orbitShortcut !== 'string' || !normalizeShortcut(settings.orbitShortcut))
+    errors.push('orbitShortcut must be a shortcut like mod+o')
+  if (
+    typeof settings.skipTransitionShortcut !== 'string' ||
+    !normalizeShortcut(settings.skipTransitionShortcut)
+  )
+    errors.push('skipTransitionShortcut must be a shortcut like mod+shift+s')
+  if (
+    typeof settings.transitionDurationMs !== 'number' ||
+    settings.transitionDurationMs < 0 ||
+    settings.transitionDurationMs > 2000
+  )
+    errors.push('transitionDurationMs must be a number between 0 and 2000')
   return errors
+}
+
+function clampTransitionMs(value: unknown, fallback: number): number {
+  const n = typeof value === 'number' && Number.isFinite(value) ? value : fallback
+  return Math.max(0, Math.min(2000, Math.round(n)))
 }
 
 function dedupePaths(paths: string[]): string[] {
@@ -132,7 +162,10 @@ const SETTING_KEYS: (keyof AppSettings)[] = [
   'agentTabLabels',
   'passLaunchEnvToAgents',
   'agentOrder',
-  'sidebarShortcut'
+  'sidebarShortcut',
+  'orbitShortcut',
+  'skipTransitionShortcut',
+  'transitionDurationMs'
 ]
 
 class SettingsService {
@@ -154,6 +187,14 @@ class SettingsService {
     this.cache.agentOrder = this.sanitizeAgentOrder(this.cache.agentOrder)
     this.cache.sidebarShortcut =
       normalizeShortcut(this.cache.sidebarShortcut) ?? DEFAULT_SIDEBAR_SHORTCUT
+    this.cache.orbitShortcut =
+      normalizeShortcut(this.cache.orbitShortcut) ?? DEFAULT_ORBIT_SHORTCUT
+    this.cache.skipTransitionShortcut =
+      normalizeShortcut(this.cache.skipTransitionShortcut) ?? DEFAULT_SKIP_TRANSITION_SHORTCUT
+    this.cache.transitionDurationMs = clampTransitionMs(
+      this.cache.transitionDurationMs,
+      DEFAULT_TRANSITION_MS
+    )
     this.persist()
   }
 
@@ -282,6 +323,19 @@ class SettingsService {
     if ('sidebarShortcut' in partial) {
       next.sidebarShortcut =
         normalizeShortcut(next.sidebarShortcut) ?? DEFAULT_SIDEBAR_SHORTCUT
+    }
+    if ('orbitShortcut' in partial) {
+      next.orbitShortcut = normalizeShortcut(next.orbitShortcut) ?? DEFAULT_ORBIT_SHORTCUT
+    }
+    if ('skipTransitionShortcut' in partial) {
+      next.skipTransitionShortcut =
+        normalizeShortcut(next.skipTransitionShortcut) ?? DEFAULT_SKIP_TRANSITION_SHORTCUT
+    }
+    if ('transitionDurationMs' in partial) {
+      next.transitionDurationMs = clampTransitionMs(
+        next.transitionDurationMs,
+        DEFAULT_TRANSITION_MS
+      )
     }
     const errors = validate(next)
     if (errors.length > 0) {

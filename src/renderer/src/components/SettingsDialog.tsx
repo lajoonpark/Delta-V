@@ -15,7 +15,14 @@ import {
   X
 } from 'lucide-react'
 import type { AgentDefinition, NewAgentPayload } from '@shared/types'
-import { formatShortcut, normalizeShortcut, shortcutFromEvent } from '@shared/types'
+import {
+  DEFAULT_ORBIT_SHORTCUT,
+  DEFAULT_SIDEBAR_SHORTCUT,
+  DEFAULT_SKIP_TRANSITION_SHORTCUT,
+  formatShortcut,
+  normalizeShortcut,
+  shortcutFromEvent
+} from '@shared/types'
 import { useAppActions, useAppState } from '@renderer/state/AppProvider'
 import { isMac } from '@renderer/hooks/useTheme'
 import {
@@ -169,17 +176,50 @@ function GeneralTab(): React.ReactElement {
 
       <div>
         <SectionTitle
-          title="Sidebar shortcut"
-          desc="Key combination that shows or hides the repository sidebar when sessions are open."
+          title="Keyboard shortcuts"
+          desc="Click a field, then press the combo to rebind. The orbit launcher opens the solar-system view over the terminal; skip transition jumps any running animation to its end."
         />
-        <div className="mt-2">
-          <ShortcutRecorder
+        <div className="mt-2 space-y-2">
+          <ShortcutRow
+            label="Toggle repository sidebar"
             value={settings.sidebarShortcut}
+            resetValue={DEFAULT_SIDEBAR_SHORTCUT}
             onChange={(shortcut) => void updateSettings({ sidebarShortcut: shortcut })}
+          />
+          <ShortcutRow
+            label="Orbit launcher"
+            value={settings.orbitShortcut}
+            resetValue={DEFAULT_ORBIT_SHORTCUT}
+            onChange={(shortcut) => void updateSettings({ orbitShortcut: shortcut })}
+          />
+          <ShortcutRow
+            label="Skip transition"
+            value={settings.skipTransitionShortcut}
+            resetValue={DEFAULT_SKIP_TRANSITION_SHORTCUT}
+            onChange={(shortcut) => void updateSettings({ skipTransitionShortcut: shortcut })}
           />
         </div>
       </div>
     </section>
+  )
+}
+
+function ShortcutRow({
+  label,
+  value,
+  resetValue,
+  onChange
+}: {
+  label: string
+  value: string
+  resetValue: string
+  onChange(shortcut: string): void
+}): React.ReactElement {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-[13px] text-zinc-700 dark:text-zinc-200">{label}</span>
+      <ShortcutRecorder value={value} onChange={onChange} resetValue={resetValue} />
+    </div>
   )
 }
 
@@ -188,10 +228,12 @@ function GeneralTab(): React.ReactElement {
 /** Click-to-record shortcut field: press any modifier+key combo to rebind. */
 function ShortcutRecorder({
   value,
-  onChange
+  onChange,
+  resetValue
 }: {
   value: string
   onChange(shortcut: string): void
+  resetValue: string
 }): React.ReactElement {
   const [recording, setRecording] = useState(false)
   const boxRef = useRef<HTMLButtonElement>(null)
@@ -244,8 +286,8 @@ function ShortcutRecorder({
           <span>{formatShortcut(value, isMac)}</span>
         )}
       </button>
-      {normalizeShortcut(value) !== 'mod+b' && !recording && (
-        <Button onClick={() => onChange('mod+b')}>Reset</Button>
+      {normalizeShortcut(value) !== normalizeShortcut(resetValue) && !recording && (
+        <Button onClick={() => onChange(resetValue)}>Reset</Button>
       )}
     </div>
   )
@@ -669,6 +711,27 @@ function AppearanceTab(): React.ReactElement {
           placeholder="Menlo, Consolas, monospace"
           className={`${inputClass} mt-2 font-mono text-xs`}
         />
+      </div>
+
+      <div>
+        <SectionTitle
+          title="Transition speed"
+          desc="Duration of the damped-zoom view transitions (orbit launcher). 0 turns motion off entirely. Your OS reduced-motion setting always cuts straight to the end state."
+        />
+        <div className="mt-2 flex items-center gap-3">
+          <input
+            type="range"
+            min={0}
+            max={2000}
+            step={50}
+            value={settings.transitionDurationMs}
+            onChange={(e) => void updateSettings({ transitionDurationMs: Number(e.target.value) })}
+            className="no-drag h-1.5 flex-1 cursor-pointer accent-[#f59e0b]"
+          />
+          <span className="w-14 text-right font-mono text-xs text-zinc-500 dark:text-zinc-400">
+            {settings.transitionDurationMs}ms
+          </span>
+        </div>
       </div>
     </section>
   )
