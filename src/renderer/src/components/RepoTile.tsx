@@ -1,6 +1,7 @@
 import { AlertTriangle, Check, Clock, Folder, Loader2, RefreshCw, Search } from 'lucide-react'
 import type { RepoIndexStatus, RepoTile } from '@shared/types'
 import { relativeTime } from './ui'
+import { MiniPlanet } from './MiniPlanet'
 
 /**
  * Repo tiles. Two variants: 'grid' (main view cards) and 'row'
@@ -76,8 +77,8 @@ export function RepoTile({
         onClick={(e) => onSelect(tile, e.metaKey || e.ctrlKey)}
         className="group flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800/80"
       >
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-gradient-to-b from-zinc-100 to-zinc-200 text-zinc-500 shadow-tile dark:from-zinc-800 dark:to-zinc-800 dark:text-zinc-400">
-          <Folder size={14} strokeWidth={2} />
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center">
+          <MiniPlanet seed={tile.name} openCount={tile.openCount} />
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px] font-medium text-zinc-800 dark:text-zinc-100">
