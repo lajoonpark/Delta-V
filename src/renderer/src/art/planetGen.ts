@@ -158,7 +158,7 @@ export function planetSpec(seed: string, opts: PlanetOptions = {}): PlanetSpec {
   }
 }
 
-function blobPath(
+export function blobPath(
   ctx: CanvasRenderingContext2D,
   pts: [number, number][],
   cx: number,

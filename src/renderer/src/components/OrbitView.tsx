@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { RepoTile } from '@shared/types'
 import { formatShortcut, shortcutMatches } from '@shared/types'
 import { useAppState } from '@renderer/state/AppProvider'
+import { LeaderTicks } from './ui'
 import { isMac } from '@renderer/hooks/useTheme'
 import { renderPlanet } from '@renderer/art/planetGen'
-import { layoutOrbit, RING_AT_LAUNCHES, type OrbitBody } from '@renderer/art/orbitLayout'
+import { layoutOrbit, RING_AT_LAUNCHES } from '@renderer/art/orbitLayout'
 
 /**
  * Full-bleed solar-system launcher. Repos are planets on concentric orbits;
@@ -41,23 +42,6 @@ function OrbitPlanet({ seed, diameter, ring }: { seed: string; diameter: number;
     renderPlanet(ctx, d, seed, { ring })
   }, [seed, d, ring])
   return <canvas ref={ref} aria-hidden style={{ width: d, height: d }} />
-}
-
-/** Small perpendicular ticks along the horizontal run of a leader line. */
-function LeaderTicks({ body }: { body: OrbitBody }): React.ReactElement {
-  const y = body.endY
-  const x0 = body.kneeX
-  const x1 = body.endX
-  const dir = Math.sign(x1 - x0) || 1
-  const len = Math.abs(x1 - x0)
-  const step = 15
-  const count = Math.floor(len / step)
-  const ticks: React.ReactElement[] = []
-  for (let i = 1; i <= count; i++) {
-    const x = x0 + dir * i * step
-    ticks.push(<line key={i} x1={x} y1={y - 3} x2={x} y2={y + 3} />)
-  }
-  return <>{ticks}</>
 }
 
 export function OrbitView({ tiles, keyboardActive, onSelect, onDismiss }: OrbitViewProps): React.ReactElement {
@@ -228,7 +212,7 @@ export function OrbitView({ tiles, keyboardActive, onSelect, onDismiss }: OrbitV
                   points={`${b.startX},${b.startY} ${b.kneeX},${b.kneeY} ${b.endX},${b.endY}`}
                   fill="none"
                 />
-                <LeaderTicks body={b} />
+                <LeaderTicks x0={b.kneeX} x1={b.endX} y={b.endY} />
                 <line x1={b.endX} y1={b.endY - 7} x2={b.endX} y2={b.endY + 7} strokeWidth={active ? 1.6 : 1} />
                 {active && (
                   <circle cx={b.cx} cy={b.cy} r={b.r + 8} fill="none" strokeDasharray="3 5" />

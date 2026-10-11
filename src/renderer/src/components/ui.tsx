@@ -267,6 +267,28 @@ export function ModalHeader({
 
 // ── Misc ───────────────────────────────────────────────────────────────────
 
+/** Perpendicular ticks along a leader-line run (JPL schematic signature). */
+export function LeaderTicks({
+  x0,
+  x1,
+  y
+}: {
+  x0: number
+  x1: number
+  y: number
+}): React.ReactElement {
+  const dir = Math.sign(x1 - x0) || 1
+  const len = Math.abs(x1 - x0)
+  const step = 15
+  const count = Math.floor(len / step)
+  const ticks: React.ReactElement[] = []
+  for (let i = 1; i <= count; i++) {
+    const x = x0 + dir * i * step
+    ticks.push(<line key={i} x1={x} y1={y - 3} x2={x} y2={y + 3} />)
+  }
+  return <>{ticks}</>
+}
+
 export function Kbd({ children }: { children: ReactNode }): React.ReactElement {
   return (
     <kbd className="rounded border border-zinc-300 bg-zinc-100 px-1 py-px font-sans text-[10px] font-medium text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">

@@ -7,7 +7,7 @@ import { useResolvedTheme, isMac } from '@renderer/hooks/useTheme'
 import { TitleBar } from '@renderer/components/TitleBar'
 import { Welcome } from '@renderer/components/RepoGrid'
 import { ScanningBadge } from '@renderer/components/RepoTile'
-import { AgentPicker } from '@renderer/components/AgentPicker'
+import { LanderStage } from '@renderer/components/LanderStage'
 import { SettingsDialog, type SettingsTab } from '@renderer/components/SettingsDialog'
 import { Sidebar } from '@renderer/components/Sidebar'
 import { TabBar } from '@renderer/components/TabBar'
@@ -133,7 +133,7 @@ export function MainWindow(): React.ReactElement {
       )}
 
       {pickerTile && (
-        <AgentPicker
+        <LanderStage
           tile={pickerTile}
           onClose={() => setPickerTile(null)}
           onManageAgents={() => {
