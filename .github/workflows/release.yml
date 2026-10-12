@@ -21,6 +21,12 @@ jobs:
           node-version: 22
           cache: npm
 
+      # node-gyp 9's bundled gyp imports distutils, removed in Python 3.12
+      # (the default python3 on current macOS runners). Installing setuptools
+      # restores distutils via its compat shim.
+      - name: Install setuptools (distutils shim)
+        run: python3 -m pip install setuptools
+
       - run: npm ci
 
       - run: npm run typecheck
@@ -43,20 +49,23 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run dist:mac -- --publish always
 
-  release-win-linux:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - run: npm ci
-
-      - name: Build Windows + Linux
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-vite build && npx electron-builder --win --linux --publish always
+  # Disabled for the v2.0.0 release: ubuntu-24.04 runners no longer ship wine,
+  # which electron-builder needs for the Windows NSIS build. Re-enable once a
+  # wine install step is added.
+  # release-win-linux:
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 60
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - uses: actions/setup-node@v4
+  #       with:
+  #         node-version: 22
+  #         cache: npm
+  #
+  #     - run: npm ci
+  #
+  #     - name: Build Windows + Linux
+  #       env:
+  #         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #       run: npx electron-vite build && npx electron-builder --win --linux --publish always
