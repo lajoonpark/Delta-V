@@ -32,7 +32,8 @@ jobs:
 
       - run: npm run typecheck
 
-      # Signing + notarization credentials (all repo secrets):
+      # Code signing + notarization (opt-in — re-add all five env vars below
+      # once the repo secrets exist; an empty CSC_LINK breaks the build):
       #   APPLE_CERTIFICATE_BASE64 / APPLE_CERTIFICATE_PASSWORD
       #     Developer ID Application .p12 (base64) — electron-builder reads
       #     these as CSC_LINK / CSC_KEY_PASSWORD automatically.
@@ -42,11 +43,6 @@ jobs:
       #     other Macs — no right-click workaround.
       - name: Build and publish DMG
         env:
-          CSC_LINK: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
-          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run dist:mac -- --publish always
 
