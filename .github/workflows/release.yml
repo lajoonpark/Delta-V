@@ -22,10 +22,11 @@ jobs:
           cache: npm
 
       # node-gyp 9's bundled gyp imports distutils, removed in Python 3.12
-      # (the default python3 on current macOS runners). Installing setuptools
-      # restores distutils via its compat shim.
-      - name: Install setuptools (distutils shim)
-        run: python3 -m pip install setuptools
+      # (the default python3 on current macOS runners). Put Python 3.11 —
+      # which still ships distutils — first on PATH for the rebuild.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
       - run: npm ci
 
