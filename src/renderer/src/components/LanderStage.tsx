@@ -23,11 +23,21 @@ import { LeaderTicks } from './ui'
 
 interface LanderStageProps {
   tile: RepoTile
-  onClose(): void
+  /** false while a cross-view transition is running against another layer. */
+  keyboardActive?: boolean
+  /** Mount at the end state — a cross-view transition is animating the layer. */
+  instant?: boolean
+  onClose(reason: 'launch' | 'dismiss'): void
   onManageAgents(): void
 }
 
-export function LanderStage({ tile, onClose, onManageAgents }: LanderStageProps): React.ReactElement {
+export function LanderStage({
+  tile,
+  keyboardActive = true,
+  instant = false,
+  onClose,
+  onManageAgents
+}: LanderStageProps): React.ReactElement {
   const { agents, settings } = useAppState()
   const { spawnTerminal } = useAppActions()
   const rootRef = useRef<HTMLDivElement>(null)
@@ -37,7 +47,7 @@ export function LanderStage({ tile, onClose, onManageAgents }: LanderStageProps)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const [entered, setEntered] = useState(false)
+  const [entered, setEntered] = useState(instant)
   const [skipped, setSkipped] = useState(false)
 
   // Enabled agents in the user's saved order — one seeded lander each.
@@ -120,7 +130,7 @@ export function LanderStage({ tile, onClose, onManageAgents }: LanderStageProps)
       try {
         setError(null)
         await spawnTerminal({ repoTileId: tile.id, agentId: agent.id, mode }, tile)
-        onClose()
+        onClose('launch')
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
       }
@@ -130,13 +140,13 @@ export function LanderStage({ tile, onClose, onManageAgents }: LanderStageProps)
 
   // ── Flight entrance (skippable; reduced-motion cuts to the end) ──
   useEffect(() => {
-    if (reduceMotion.current || transitionMs <= 0) {
+    if (instant || reduceMotion.current || transitionMs <= 0) {
       setEntered(true)
       return
     }
     const id = requestAnimationFrame(() => setEntered(true))
     return () => cancelAnimationFrame(id)
-  }, [transitionMs])
+  }, [transitionMs, instant])
 
   const skipTransition = useCallback(() => {
     setSkipped(true)
@@ -158,6 +168,7 @@ export function LanderStage({ tile, onClose, onManageAgents }: LanderStageProps)
   )
 
   useEffect(() => {
+    if (!keyboardActive) return
     const onKey = (e: KeyboardEvent): void => {
       const skipHotkey = settings?.skipTransitionShortcut ?? 'mod+shift+s'
       if (shortcutMatches(e, skipHotkey, isMac)) {
@@ -180,7 +191,7 @@ export function LanderStage({ tile, onClose, onManageAgents }: LanderStageProps)
       } else if (e.key === 'Escape') {
         e.preventDefault()
         if (query) setQuery('')
-        else onClose()
+        else onClose('dismiss')
       } else if (e.key === 'Backspace') {
         e.preventDefault()
         setQuery((q) => q.slice(0, -1))
@@ -192,7 +203,7 @@ export function LanderStage({ tile, onClose, onManageAgents }: LanderStageProps)
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings?.skipTransitionShortcut, flat, sel, query, move, launch, onClose, skipTransition])
+  }, [keyboardActive, settings?.skipTransitionShortcut, flat, sel, query, move, launch, onClose, skipTransition])
 
   useEffect(() => {
     rootRef.current?.focus()

@@ -5,7 +5,7 @@ import { useAppState } from '@renderer/state/AppProvider'
 import { LeaderTicks } from './ui'
 import { isMac } from '@renderer/hooks/useTheme'
 import { renderPlanet } from '@renderer/art/planetGen'
-import { layoutOrbit, RING_AT_LAUNCHES } from '@renderer/art/orbitLayout'
+import { RING_AT_LAUNCHES, type OrbitLayout } from '@renderer/art/orbitLayout'
 
 /**
  * Full-bleed solar-system launcher. Repos are planets on concentric orbits;
@@ -15,15 +15,22 @@ import { layoutOrbit, RING_AT_LAUNCHES } from '@renderer/art/orbitLayout'
  *   terminal — Esc returns. Orbit radius is layout only, not physics/3D.
  * - Keyboard: type-to-filter, arrows to move, Enter to launch. Damped-zoom
  *   entrance is skippable (rebindable hotkey); reduced-motion cuts to the end.
+ *   `instant` mounts at the end state when a cross-view transition owns the
+ *   motion instead.
  */
 
 interface OrbitViewProps {
-  tiles: RepoTile[]
+  /** Deterministic layout, computed by the window (it also needs the rects). */
+  layout: OrbitLayout
   /** false while a modal (picker/settings) is open, so keys go to the modal. */
   keyboardActive: boolean
+  /** Mount at the end state — a cross-view transition is animating the layer. */
+  instant?: boolean
+  /** Planet to select on mount (the one that carried the eye in). */
+  selectedTileId?: string | null
   onSelect(tile: RepoTile): void
-  /** Esc in overlay mode → return to the terminal. */
-  onDismiss(): void
+  /** Esc in overlay mode → return to the terminal (carrying the selection). */
+  onDismiss(selectedTileId: string | null): void
 }
 
 /** Per-planet canvas, drawn at dramatic orbit size (seeded like the sidebar). */
@@ -44,26 +51,20 @@ function OrbitPlanet({ seed, diameter, ring }: { seed: string; diameter: number;
   return <canvas ref={ref} aria-hidden style={{ width: d, height: d }} />
 }
 
-export function OrbitView({ tiles, keyboardActive, onSelect, onDismiss }: OrbitViewProps): React.ReactElement {
+export function OrbitView({
+  layout,
+  keyboardActive,
+  instant,
+  selectedTileId,
+  onSelect,
+  onDismiss
+}: OrbitViewProps): React.ReactElement {
   const { settings } = useAppState()
   const rootRef = useRef<HTMLDivElement>(null)
-  const [size, setSize] = useState({ width: 0, height: 0 })
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(0)
-  const [entered, setEntered] = useState(false)
+  const [entered, setEntered] = useState(instant === true)
   const [skipped, setSkipped] = useState(false)
-
-  // ── Measure the full-bleed container ──
-  useEffect(() => {
-    const el = rootRef.current
-    if (!el) return
-    const ro = new ResizeObserver(() => {
-      setSize({ width: el.clientWidth, height: el.clientHeight })
-    })
-    ro.observe(el)
-    setSize({ width: el.clientWidth, height: el.clientHeight })
-    return () => ro.disconnect()
-  }, [])
 
   // ── Damped-zoom entrance (skippable; reduced-motion cuts to the end) ──
   const transitionMs = settings?.transitionDurationMs ?? 800
@@ -72,13 +73,13 @@ export function OrbitView({ tiles, keyboardActive, onSelect, onDismiss }: OrbitV
     reduceMotion.current = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   }, [])
   useEffect(() => {
-    if (reduceMotion.current || transitionMs <= 0) {
+    if (instant || reduceMotion.current || transitionMs <= 0) {
       setEntered(true)
       return
     }
     const id = requestAnimationFrame(() => setEntered(true))
     return () => cancelAnimationFrame(id)
-  }, [transitionMs])
+  }, [transitionMs, instant])
 
   const skipTransition = useCallback(() => {
     setSkipped(true)
@@ -86,10 +87,6 @@ export function OrbitView({ tiles, keyboardActive, onSelect, onDismiss }: OrbitV
   }, [])
 
   // ── Filter + selection ──
-  const layout = useMemo(
-    () => layoutOrbit(tiles, size.width, size.height),
-    [tiles, size.width, size.height]
-  )
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return layout.bodies
@@ -99,6 +96,13 @@ export function OrbitView({ tiles, keyboardActive, onSelect, onDismiss }: OrbitV
   }, [layout.bodies, query])
 
   useEffect(() => setSelected(0), [query])
+  // Keep the carried-in planet selected when the view appears.
+  useEffect(() => {
+    if (!selectedTileId) return
+    const idx = visible.findIndex((b) => b.tile.id === selectedTileId)
+    if (idx >= 0) setSelected(idx)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTileId, layout.bodies])
   const sel = Math.min(selected, Math.max(0, visible.length - 1))
 
   // ── Keyboard model ──
@@ -135,7 +139,7 @@ export function OrbitView({ tiles, keyboardActive, onSelect, onDismiss }: OrbitV
       } else if (e.key === 'Escape') {
         e.preventDefault()
         if (query) setQuery('')
-        else onDismiss()
+        else onDismiss(visible[sel]?.tile.id ?? null)
       } else if (e.key === 'Backspace') {
         e.preventDefault()
         setQuery((q) => q.slice(0, -1))
@@ -184,7 +188,7 @@ export function OrbitView({ tiles, keyboardActive, onSelect, onDismiss }: OrbitV
           </defs>
 
           {/* Sun */}
-          <circle cx={layout.sunX} cy={layout.sunY} r={Math.min(size.width, size.height) * 0.16} fill="url(#sun-glow)" />
+          <circle cx={layout.sunX} cy={layout.sunY} r={Math.min(layout.width, layout.height) * 0.16} fill="url(#sun-glow)" />
           <circle cx={layout.sunX} cy={layout.sunY} r={4} fill="#FF8A3D" />
 
           {/* Orbit rings (layout only) */}
@@ -255,7 +259,7 @@ export function OrbitView({ tiles, keyboardActive, onSelect, onDismiss }: OrbitV
               className="absolute select-none"
               style={{
                 top: b.endY,
-                ...(right ? { left: b.labelX } : { right: size.width - b.labelX }),
+                ...(right ? { left: b.labelX } : { right: layout.width - b.labelX }),
                 transform: 'translateY(-50%)',
                 textAlign: right ? 'left' : 'right'
               }}
