@@ -6,7 +6,7 @@
  * All rects are viewport coordinates (top-left + diameter) so the flight can
  * bridge any two layers regardless of their positioning context.
  */
-import { renderPlanet } from '@renderer/art/planetGen'
+import { snapshotPlanet } from '@renderer/art/planet3d'
 
 export interface PlanetRect {
   x: number
@@ -54,9 +54,11 @@ export interface FlightHandle {
 }
 
 /**
- * Runs the shared-element flight: one planet canvas glides from `from` to `to`
- * on the damped curve, fading out over the last stretch so the destination
- * view's own planet takes over at the same spot.
+ * Runs the shared-element flight: one real 3D planet render glides from `from`
+ * to `to` on the damped curve, fading out over the last stretch so the
+ * destination view's own planet takes over at the same spot. The sprite is a
+ * three.js snapshot (same surface + lighting recipe as the stage), so it never
+ * reads as a flat cutout handing off to a 3D scene.
  */
 export function runPlanetFlight(spec: FlightSpec): FlightHandle {
   const { seed, ring, from, to } = spec
@@ -70,20 +72,10 @@ export function runPlanetFlight(spec: FlightSpec): FlightHandle {
   const host = document.createElement('div')
   host.style.cssText =
     'position:fixed;inset:0;pointer-events:none;z-index:60;overflow:hidden'
-  const canvas = document.createElement('canvas')
+  const canvas = snapshotPlanet(seed, ring, Math.max(from.size, to.size))
+  canvas.style.cssText = 'position:absolute;display:block'
   host.appendChild(canvas)
   document.body.appendChild(host)
-
-  const maxSize = Math.max(from.size, to.size)
-  const dpr = Math.min(window.devicePixelRatio || 1, 2)
-  canvas.width = Math.round(maxSize * dpr)
-  canvas.height = Math.round(maxSize * dpr)
-  canvas.style.cssText = 'position:absolute;display:block'
-  const ctx = canvas.getContext('2d')
-  if (ctx) {
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    renderPlanet(ctx, maxSize, seed, { ring })
-  }
 
   let raf = 0
   let settled = false
@@ -94,10 +86,12 @@ export function runPlanetFlight(spec: FlightSpec): FlightHandle {
     const size = from.size + (to.size - from.size) * e
     const x = from.x + (to.x - from.x) * e
     const y = from.y + (to.y - from.y) * e
-    canvas.style.width = `${size}px`
-    canvas.style.height = `${size}px`
-    canvas.style.left = `${x}px`
-    canvas.style.top = `${y}px`
+    // The sprite canvas is 2× the planet diameter (ring room); park it so the
+    // planet itself rides the interpolated rect.
+    canvas.style.width = `${size * 2}px`
+    canvas.style.height = `${size * 2}px`
+    canvas.style.left = `${x - size / 2}px`
+    canvas.style.top = `${y - size / 2}px`
     canvas.style.opacity = t < 0.55 ? '1' : `${Math.max(0, 1 - (t - 0.55) / 0.45)}`
   }
 

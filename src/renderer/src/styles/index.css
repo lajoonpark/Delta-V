@@ -52,6 +52,18 @@
   }
 }
 
+/* Orbit-view callout reveal (see components/OrbitView.tsx): leader lines and
+   label plates fade in on the planets' beat — the planets themselves pop in
+   inside the 3D scene (orbitScene.ts). */
+@keyframes orbit-fade {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
 :root {
   color-scheme: light dark;
   /* Space chrome — mission-control instrument panel (always dark). */

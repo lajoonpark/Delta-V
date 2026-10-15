@@ -316,3 +316,88 @@ export function drawPlanet(
   if (!ctx) return
   renderPlanet(ctx, canvas.width, seed, opts)
 }
+
+// ── Sphere surface (shared with the 3D renders) ──────────────────────────
+
+/**
+ * Equirect surface texture from the planet recipe — features only, no baked
+ * light (terminator/gloss come from the renderer). Features wrap seamlessly:
+ * each pass draws at x − W, x, x + W. The generator's unit square maps onto
+ * W×H with a 0.5 vertical squash so shapes stay round near the equator on the
+ * sphere. Shared by the orbit view, the lander stage and transition flights
+ * (same seed → same surface everywhere).
+ */
+export function paintPlanetEquirect(seed: string): HTMLCanvasElement {
+  const W = 1024
+  const H = 512
+  const canvas = document.createElement('canvas')
+  canvas.width = W
+  canvas.height = H
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return canvas
+
+  const spec = planetSpec(seed, { ring: false })
+  const ramp = spec.scale
+
+  ctx.fillStyle = hsl(ramp[1].h, ramp[1].s, ramp[1].l)
+  ctx.fillRect(0, 0, W, H)
+
+  const bounds = [0, ...spec.bandYs, 1]
+  for (let i = 0; i < bounds.length - 1; i++) {
+    const t0 = bounds[i]
+    const t1 = bounds[i + 1]
+    const tone = ramp[Math.min(ramp.length - 1, Math.floor(((t0 + t1) / 2) * ramp.length))]
+    ctx.fillStyle = hsl(tone.h, tone.s, tone.l)
+    ctx.fillRect(0, t0 * H, W, (t1 - t0) * H + 1)
+  }
+
+  const pass = (dx: number, draw: () => void): void => {
+    ctx.save()
+    ctx.translate(dx, H / 2)
+    ctx.scale(1, 0.5)
+    ctx.translate(0, -H / 2)
+    draw()
+    ctx.restore()
+  }
+  for (const dx of [-W, 0, W]) {
+    pass(dx, () => {
+      for (const blob of spec.blobs) {
+        const tone = ramp[blob.tone]
+        ctx.fillStyle = hsl(tone.h, tone.s, tone.l + 0.06)
+        blobPath(ctx, blob.pts, W / 2, H / 2, W / 2)
+        ctx.fill()
+      }
+      const cloud = hsl(spec.baseHue, ramp[2].s * 0.35, 0.92, 0.85)
+      for (const st of spec.streaks) {
+        ctx.save()
+        ctx.translate(st.x * W, st.y * H)
+        ctx.rotate(st.angle)
+        ctx.fillStyle = cloud
+        const w = st.w * W
+        const h = Math.max(2, st.h * W)
+        ctx.beginPath()
+        ctx.roundRect(-w / 2, -h / 2, w, h, h / 2)
+        ctx.fill()
+        if (st.w > 0.28) {
+          ctx.beginPath()
+          ctx.roundRect(-w * 0.18, -h * 1.6, w * 0.42, h, h / 2)
+          ctx.fill()
+        }
+        ctx.restore()
+      }
+    })
+  }
+  return canvas
+}
+
+const equirectCache = new Map<string, HTMLCanvasElement>()
+
+/** Cached equirect surface for a seed (painted once per app run). */
+export function getPlanetEquirect(seed: string): HTMLCanvasElement {
+  let tex = equirectCache.get(seed)
+  if (!tex) {
+    tex = paintPlanetEquirect(seed)
+    equirectCache.set(seed, tex)
+  }
+  return tex
+}

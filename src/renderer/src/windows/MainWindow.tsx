@@ -34,6 +34,11 @@ import {
  * (see components/viewTransition.ts). Length = `transitionDurationMs`
  * (0 = cut), skippable via `skipTransitionShortcut`, and reduced-motion
  * always cuts to the end states.
+ *
+ * The flying planet only joins orbit ↔ stage (both sides are lit spheres).
+ * Transitions that touch the sidebar's flat mini-planets cross-fade the
+ * layers without it — a 3D planet must never animate into a flat one — and
+ * landing on the terminal after a launch is a plain cut.
  */
 
 type ViewKey = 'orbit' | 'stage' | 'terminal'
@@ -42,7 +47,6 @@ type TransitionKind =
   | 'dive-to-stage'
   | 'rise-to-stage'
   | 'back-to-orbit'
-  | 'land-to-terminal'
   | 'open-overlay'
   | 'close-overlay'
 
@@ -50,7 +54,6 @@ const VIEW_OF: Record<TransitionKind, { from: ViewKey; to: ViewKey }> = {
   'dive-to-stage': { from: 'orbit', to: 'stage' },
   'rise-to-stage': { from: 'terminal', to: 'stage' },
   'back-to-orbit': { from: 'stage', to: 'orbit' },
-  'land-to-terminal': { from: 'stage', to: 'terminal' },
   'open-overlay': { from: 'terminal', to: 'orbit' },
   'close-overlay': { from: 'orbit', to: 'terminal' }
 }
@@ -60,7 +63,6 @@ const CHOREO: Record<TransitionKind, { outScale: number; inScale: number }> = {
   'dive-to-stage': { outScale: 1.9, inScale: 1.14 },
   'rise-to-stage': { outScale: 1.9, inScale: 1.14 },
   'back-to-orbit': { outScale: 0.62, inScale: 1.14 },
-  'land-to-terminal': { outScale: 0.8, inScale: 1.06 },
   'open-overlay': { outScale: 0.85, inScale: 1.14 },
   'close-overlay': { outScale: 1.7, inScale: 1.06 }
 }
@@ -125,14 +127,12 @@ export function MainWindow(): React.ReactElement {
   )
 
   // ── Shared-planet rects (viewport coordinates) ──
-  const orbitRect = useCallback(
-    (tileId: string): PlanetRect | null => {
-      const b = orbitLayout.bodies.find((x) => x.tile.id === tileId)
-      if (!b || contentBox.width <= 0) return null
-      return { x: contentBox.left + b.cx - b.r, y: contentBox.top + b.cy - b.r, size: b.r * 2 }
-    },
-    [orbitLayout, contentBox]
-  )
+  // The orbit view registers its planet wrappers (keyed `orbit:<tile id>`) and
+  // keeps them at their live drifting positions, so flight endpoints always
+  // land on the planet where it actually is right now.
+  const orbitRect = useCallback((tileId: string): PlanetRect | null => {
+    return domPlanetRect(`orbit:${tileId}`)
+  }, [])
 
   const stageRect = useCallback((): PlanetRect => {
     const L = layoutLanderStage(1, window.innerWidth, window.innerHeight)
@@ -145,22 +145,15 @@ export function MainWindow(): React.ReactElement {
 
   const resolveRects = useCallback(
     (kind: TransitionKind, tile: RepoTile): { from: PlanetRect; to: PlanetRect } | null => {
+      // The flying planet only joins orbit ↔ stage. Transitions that involve
+      // the sidebar's flat mini-planets have no shared-element flight: a 3D
+      // planet must never animate into a flat one (or the reverse).
+      if (kind !== 'dive-to-stage' && kind !== 'back-to-orbit') return null
       const orbit = orbitRect(tile.id)
-      const dom = domPlanetRect(tile.id)
-      switch (kind) {
-        case 'dive-to-stage':
-          return orbit ? { from: orbit, to: stageRect() } : null
-        case 'rise-to-stage':
-          return dom ? { from: dom, to: stageRect() } : null
-        case 'back-to-orbit':
-          return orbit ? { from: stageRect(), to: orbit } : null
-        case 'land-to-terminal':
-          return dom ? { from: stageRect(), to: dom } : null
-        case 'open-overlay':
-          return dom && orbit ? { from: dom, to: orbit } : null
-        case 'close-overlay':
-          return orbit && dom ? { from: orbit, to: dom } : null
-      }
+      if (!orbit) return null
+      return kind === 'dive-to-stage'
+        ? { from: orbit, to: stageRect() }
+        : { from: stageRect(), to: orbit }
     },
     [orbitRect, stageRect]
   )
@@ -322,16 +315,18 @@ export function MainWindow(): React.ReactElement {
   const closeStage = (reason: 'launch' | 'dismiss'): void => {
     const tile = pickerTile
     setPickerTile(null)
-    if (!tile) return
     if (reason === 'launch') {
-      // Land on the terminal the launch just spawned.
+      // Land on the terminal the launch just spawned. Plain cut: the 3D stage
+      // planet must never animate into the flat sidebar mini-planets — it just
+      // disappears and the terminal is there.
       setOrbitOpen(false)
-      startTransition('land-to-terminal', tile)
-    } else if (orbitOpen || !hasSessions) {
-      startTransition('back-to-orbit', tile)
-    } else {
-      startTransition('land-to-terminal', tile)
+      return
     }
+    if (orbitOpen || !hasSessions) {
+      if (tile) startTransition('back-to-orbit', tile)
+      return
+    }
+    // Dismiss to the terminal below — same cut (3D → flat never animates).
   }
 
   // ── Layer mounting + cross-fade styles ──

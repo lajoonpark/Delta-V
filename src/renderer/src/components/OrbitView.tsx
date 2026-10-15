@@ -4,15 +4,30 @@ import { formatShortcut, shortcutMatches } from '@shared/types'
 import { useAppState } from '@renderer/state/AppProvider'
 import { LeaderTicks } from './ui'
 import { isMac } from '@renderer/hooks/useTheme'
-import { renderPlanet } from '@renderer/art/planetGen'
-import { RING_AT_LAUNCHES, type OrbitLayout } from '@renderer/art/orbitLayout'
+import {
+  orbitPoint,
+  projectPoint,
+  solveCallouts,
+  SUN_RADIUS,
+  type CalloutSmooth,
+  type OrbitLayout
+} from '@renderer/art/orbitLayout'
+import { mountOrbitScene, type OrbitSceneHandle } from './orbitScene'
+import { registerDomPlanet } from './viewTransition'
 
 /**
- * Full-bleed solar-system launcher. Repos are planets on concentric orbits;
- * each is labelled by a ticked hairline leader-line callout (JPL schematic).
+ * Full-bleed solar-system launcher — a real 3D scene (see orbitScene.ts).
+ * Repos are planets on Keplerian ellipses around a glowing sun: inner ones
+ * swing around faster than outer ones, and every orbit compresses a little
+ * near perihelion. Labels hang off ticked hairline leader-line callouts (JPL
+ * schematic) whose screen geometry is re-solved every frame from the planets'
+ * live positions — the plate column follows each planet's side, plates are
+ * re-slotted so they never collide, and everything eases instead of snapping.
  *
  * - Home: replaces the repo grid. Overlay (sessions open): a launcher over the
- *   terminal — Esc returns. Orbit radius is layout only, not physics/3D.
+ *   terminal — Esc returns.
+ * - Mouse: hover a planet or its label to select (highlight follows the
+ *   cursor), click to launch — same model as the lander stage.
  * - Keyboard: type-to-filter, arrows to move, Enter to launch. Damped-zoom
  *   entrance is skippable (rebindable hotkey); reduced-motion cuts to the end.
  *   `instant` mounts at the end state when a cross-view transition owns the
@@ -33,23 +48,9 @@ interface OrbitViewProps {
   onDismiss(selectedTileId: string | null): void
 }
 
-/** Per-planet canvas, drawn at dramatic orbit size (seeded like the sidebar). */
-function OrbitPlanet({ seed, diameter, ring }: { seed: string; diameter: number; ring: boolean }): React.ReactElement {
-  const ref = useRef<HTMLCanvasElement>(null)
-  const d = Math.max(8, Math.round(diameter))
-  useEffect(() => {
-    const canvas = ref.current
-    if (!canvas) return
-    const dpr = window.devicePixelRatio || 1
-    canvas.width = Math.round(d * dpr)
-    canvas.height = Math.round(d * dpr)
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    renderPlanet(ctx, d, seed, { ring })
-  }, [seed, d, ring])
-  return <canvas ref={ref} aria-hidden style={{ width: d, height: d }} />
-}
+const POP_EASE = 'cubic-bezier(0.16, 1, 0.3, 1)'
+/** Minimum click/hover target (px) so distant planets stay grabbable. */
+const MIN_HIT = 28
 
 export function OrbitView({
   layout,
@@ -61,6 +62,8 @@ export function OrbitView({
 }: OrbitViewProps): React.ReactElement {
   const { settings } = useAppState()
   const rootRef = useRef<HTMLDivElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const sceneRef = useRef<OrbitSceneHandle | null>(null)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(0)
   const [entered, setEntered] = useState(instant === true)
@@ -84,6 +87,7 @@ export function OrbitView({
   const skipTransition = useCallback(() => {
     setSkipped(true)
     setEntered(true)
+    sceneRef.current?.skip()
   }, [])
 
   // ── Filter + selection ──
@@ -157,6 +161,154 @@ export function OrbitView({
     if (keyboardActive) rootRef.current?.focus()
   }, [keyboardActive])
 
+  // ── 3D scene mount (disposed with the view) ──
+  const measured = layout.width > 0 && layout.height > 0
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas || !measured) return
+    const handle = mountOrbitScene({
+      canvas,
+      width: layout.width,
+      height: layout.height,
+      bodies: layout.bodies,
+      reducedMotion: reduceMotion.current
+    })
+    sceneRef.current = handle
+    if (instant || reduceMotion.current) handle.skip()
+    return () => {
+      handle.dispose()
+      sceneRef.current = null
+    }
+    // Mount once; later layout changes flow through update() below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [measured])
+
+  useEffect(() => {
+    if (measured) sceneRef.current?.update(layout.width, layout.height, layout.bodies)
+  }, [layout, measured])
+
+  // Filtered-out planets hide in the scene too.
+  useEffect(() => {
+    const mask: Record<string, boolean> = {}
+    for (const b of layout.bodies) {
+      mask[b.tile.id] = visible.some((v) => v.tile.id === b.tile.id)
+    }
+    sceneRef.current?.setVisible(mask)
+  }, [visible, layout.bodies, measured])
+
+  // ── DOM sync loop ──
+  // The scene owns drift + spin; this loop projects each body's live orbit
+  // elements into content pixels, parks the hit targets on their planets and
+  // solves the callout plates (column, slot, leader line) from the live
+  // positions so nothing overlaps or sweeps across the system. Bodies mutate
+  // `cx`/`cy` in place so the view-transition rect registry always reads live
+  // positions.
+  const wrapRefs = useRef(new Map<string, HTMLButtonElement>())
+  const lineRefs = useRef(new Map<string, SVGPolylineElement>())
+  const leaderRefs = useRef(new Map<string, SVGGElement>())
+  const labelRefs = useRef(new Map<string, HTMLButtonElement>())
+  const selCircleRef = useRef<SVGCircleElement | null>(null)
+  /** Per-tile callout smoothing state — survives layout object swaps. */
+  const smoothRef = useRef(new Map<string, CalloutSmooth>())
+  const live = useRef({ layout, visible, sel })
+  live.current = { layout, visible, sel }
+
+  const setWrap = useCallback((id: string, el: HTMLButtonElement | null) => {
+    if (el) wrapRefs.current.set(id, el)
+    else wrapRefs.current.delete(id)
+    registerDomPlanet(`orbit:${id}`, el)
+  }, [])
+  const setLine = useCallback((id: string, el: SVGPolylineElement | null) => {
+    if (el) lineRefs.current.set(id, el)
+    else lineRefs.current.delete(id)
+  }, [])
+  const setLeader = useCallback((id: string, el: SVGGElement | null) => {
+    if (el) leaderRefs.current.set(id, el)
+    else leaderRefs.current.delete(id)
+  }, [])
+  const setLabel = useCallback((id: string, el: HTMLButtonElement | null) => {
+    if (el) labelRefs.current.set(id, el)
+    else labelRefs.current.delete(id)
+  }, [])
+
+  useEffect(() => {
+    let raf = 0
+    let last = 0
+    const tick = (now: number): void => {
+      raf = requestAnimationFrame(tick)
+      const dt = last ? Math.min(0.05, (now - last) / 1000) : 0.016
+      last = now
+      const { layout: L, visible: vis, sel: s } = live.current
+
+      for (const b of L.bodies) {
+        const [wx, wz] = orbitPoint(b.a, b.ecc, b.peri, b.meanAnomaly)
+        const p = projectPoint(L.width, L.height, wx, 0, wz)
+        b.cx = p.x
+        b.cy = p.y
+        b.r = b.radius * p.scale
+
+        const wrap = wrapRefs.current.get(b.tile.id)
+        if (wrap) {
+          const d = Math.max(MIN_HIT, b.r * 2)
+          wrap.style.left = `${b.cx - d / 2}px`
+          wrap.style.top = `${b.cy - d / 2}px`
+          wrap.style.width = `${d}px`
+          wrap.style.height = `${d}px`
+          wrap.style.zIndex = String(100 + Math.round(b.cy))
+        }
+      }
+
+      // Drop callout state for repos that left the scan.
+      if (smoothRef.current.size !== L.bodies.length) {
+        const ids = new Set(L.bodies.map((b) => b.tile.id))
+        for (const id of [...smoothRef.current.keys()]) {
+          if (!ids.has(id)) smoothRef.current.delete(id)
+        }
+      }
+
+      const sun = projectPoint(L.width, L.height, 0, 0, 0)
+      solveCallouts(vis, L.width, L.height, smoothRef.current, dt, {
+        x: sun.x,
+        y: sun.y,
+        r: SUN_RADIUS * sun.scale
+      })
+
+      for (const b of vis) {
+        const line = lineRefs.current.get(b.tile.id)
+        if (line) {
+          line.setAttribute(
+            'points',
+            `${b.startX},${b.startY} ${b.kneeX},${b.kneeY} ${b.endX},${b.endY}`
+          )
+        }
+        const leader = leaderRefs.current.get(b.tile.id)
+        if (leader) leader.style.opacity = b.leaderOpacity.toFixed(3)
+        const label = labelRefs.current.get(b.tile.id)
+        if (label) {
+          label.style.top = `${b.endY}px`
+          if (b.align === 'left') {
+            label.style.left = `${b.labelX}px`
+            label.style.right = 'auto'
+          } else {
+            label.style.left = 'auto'
+            label.style.right = `${L.width - b.labelX}px`
+          }
+          label.style.opacity = b.labelOpacity.toFixed(3)
+        }
+      }
+
+      const active = vis[s]
+      const ringEl = selCircleRef.current
+      if (ringEl && active) {
+        ringEl.setAttribute('cx', String(active.cx))
+        ringEl.setAttribute('cy', String(active.cy))
+        ringEl.setAttribute('r', String(active.r + 8))
+      }
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [])
+
   const duration = reduceMotion.current ? 0 : transitionMs
   const animating = !reduceMotion.current && duration > 0 && !skipped
   const wrapperStyle: React.CSSProperties = {
@@ -165,6 +317,16 @@ export function OrbitView({
     transition: animating
       ? `transform ${duration}ms cubic-bezier(0.16,1,0.3,1), opacity ${duration}ms ease-out`
       : 'none'
+  }
+
+  // Leader lines + labels fade in on the planets' beat (the planets themselves
+  // pop inside the 3D scene).
+  const fadeStyle = (i: number): React.CSSProperties | undefined => {
+    if (instant || reduceMotion.current) return undefined
+    return {
+      animation: `orbit-fade 700ms ${POP_EASE} both`,
+      animationDelay: `${i * 90}ms`
+    }
   }
 
   const orbitShortcut = formatShortcut(settings?.orbitShortcut ?? 'mod+o', isMac)
@@ -177,108 +339,120 @@ export function OrbitView({
       style={{ background: 'var(--void)' }}
     >
       <div className="absolute inset-0" style={wrapperStyle}>
-        {/* Orbit rings + leader-line callouts */}
-        <svg className="absolute inset-0 h-full w-full" style={{ overflow: 'visible' }}>
-          <defs>
-            <radialGradient id="sun-glow">
-              <stop offset="0%" stopColor="#FF8A3D" stopOpacity="0.9" />
-              <stop offset="35%" stopColor="#FF8A3D" stopOpacity="0.25" />
-              <stop offset="100%" stopColor="#FF8A3D" stopOpacity="0" />
-            </radialGradient>
-          </defs>
+        {/* 3D solar system (sun, orbit lines, planets) */}
+        <canvas ref={canvasRef} aria-hidden className="absolute inset-0 h-full w-full" />
 
-          {/* Sun */}
-          <circle cx={layout.sunX} cy={layout.sunY} r={Math.min(layout.width, layout.height) * 0.16} fill="url(#sun-glow)" />
-          <circle cx={layout.sunX} cy={layout.sunY} r={4} fill="#FF8A3D" />
-
-          {/* Orbit rings (layout only) */}
-          {layout.rings.map((r, i) => (
-            <circle
-              key={i}
-              cx={layout.sunX}
-              cy={layout.sunY}
-              r={r}
-              fill="none"
-              stroke="var(--hairline)"
-              strokeWidth={1}
-              strokeDasharray="2 6"
-              opacity={0.7}
-            />
-          ))}
-
-          {/* Leader lines + ticks */}
-          {visible.map((b) => {
+        {/* Leader-line callouts + selection ring */}
+        <svg className="pointer-events-none absolute inset-0 h-full w-full" style={{ overflow: 'visible' }}>
+          {visible.map((b, i) => {
+            if (!b.hasPlate) return null
             const active = visible[sel]?.tile.id === b.tile.id
             const stroke = active ? 'var(--ember)' : 'var(--hairline)'
             return (
-              <g key={b.tile.id} stroke={stroke} strokeWidth={active ? 1.4 : 1}>
-                <polyline
-                  points={`${b.startX},${b.startY} ${b.kneeX},${b.kneeY} ${b.endX},${b.endY}`}
-                  fill="none"
-                />
-                <LeaderTicks x0={b.kneeX} x1={b.endX} y={b.endY} />
-                <line x1={b.endX} y1={b.endY - 7} x2={b.endX} y2={b.endY + 7} strokeWidth={active ? 1.6 : 1} />
-                {active && (
-                  <circle cx={b.cx} cy={b.cy} r={b.r + 8} fill="none" strokeDasharray="3 5" />
-                )}
+              <g key={b.tile.id} style={fadeStyle(i)}>
+                <g
+                  ref={(el) => setLeader(b.tile.id, el)}
+                  stroke={stroke}
+                  strokeWidth={active ? 1.4 : 1}
+                >
+                  <polyline
+                    ref={(el) => setLine(b.tile.id, el)}
+                    points={`${b.startX},${b.startY} ${b.kneeX},${b.kneeY} ${b.endX},${b.endY}`}
+                    fill="none"
+                  />
+                  <LeaderTicks x0={b.kneeX} x1={b.endX} y={b.endY} />
+                  <line x1={b.endX} y1={b.endY - 7} x2={b.endX} y2={b.endY + 7} strokeWidth={active ? 1.6 : 1} />
+                </g>
               </g>
             )
           })}
+
+          {/* Selection ring rides the chosen planet */}
+          {visible[sel] && (
+            <circle
+              ref={selCircleRef}
+              cx={visible[sel].cx}
+              cy={visible[sel].cy}
+              r={visible[sel].r + 8}
+              fill="none"
+              stroke="var(--ember)"
+              strokeDasharray="3 5"
+            />
+          )}
         </svg>
 
-        {/* Planets */}
-        {visible.map((b) => {
-          const active = visible[sel]?.tile.id === b.tile.id
+        {/* Planet hit targets — hover selects, click launches */}
+        {visible.map((b, i) => {
           return (
-            <div
+            <button
               key={b.tile.id}
-              className="absolute"
+              type="button"
+              aria-label={`Launch ${b.tile.name}`}
+              ref={(el) => setWrap(b.tile.id, el)}
+              onMouseEnter={() => setSelected(i)}
+              onClick={() => onSelect(b.tile)}
+              className="absolute rounded-full outline-none"
               style={{
                 left: b.cx - b.r,
                 top: b.cy - b.r,
-                filter: active ? 'none' : 'saturate(0.85) brightness(0.92)',
-                transition: 'filter 150ms ease'
+                width: Math.max(MIN_HIT, b.r * 2),
+                height: Math.max(MIN_HIT, b.r * 2),
+                zIndex: 100 + Math.round(b.cy)
               }}
-            >
-              <OrbitPlanet
-                seed={b.tile.name}
-                diameter={b.r * 2}
-                ring={b.tile.openCount >= RING_AT_LAUNCHES}
-              />
-            </div>
+            />
           )
         })}
 
-        {/* Callout labels */}
-        {visible.map((b) => {
-          const active = visible[sel]?.tile.id === b.tile.id
-          const right = b.align === 'left'
-          return (
-            <div
-              key={b.tile.id}
-              className="absolute select-none"
-              style={{
-                top: b.endY,
-                ...(right ? { left: b.labelX } : { right: layout.width - b.labelX }),
-                transform: 'translateY(-50%)',
-                textAlign: right ? 'left' : 'right'
-              }}
-            >
-              <div
-                className="font-hud text-[11px] leading-tight tracking-[0.14em] uppercase"
-                style={{ color: active ? 'var(--ember)' : 'var(--paper)' }}
+        {/* Callout labels — hover selects, click launches. Dark plates keep them
+            readable when a drifting planet passes beneath (reference look).
+            The full-bleed wrapper carries the entrance fade; the plate itself
+            is placed + faded live by the sync loop above. */}
+        {visible.map((b, i) =>
+          b.hasPlate ? (
+            <div key={b.tile.id} className="pointer-events-none absolute inset-0" style={fadeStyle(i)}>
+              <button
+                type="button"
+                aria-label={`Launch ${b.tile.name}`}
+                ref={(el) => setLabel(b.tile.id, el)}
+                onClick={() => onSelect(b.tile)}
+                onMouseEnter={() => setSelected(i)}
+                className="pointer-events-auto absolute select-none rounded-sm border px-2.5 py-1 text-left outline-none"
+                style={{
+                  top: b.endY,
+                  ...(b.align === 'left' ? { left: b.labelX } : { right: layout.width - b.labelX }),
+                  transform: 'translateY(-50%)',
+                  textAlign: b.align === 'left' ? 'left' : 'right',
+                  maxWidth: 240,
+                  background: 'rgba(18,22,30,0.72)',
+                  borderColor:
+                    visible[sel]?.tile.id === b.tile.id
+                      ? 'rgba(255,138,61,0.5)'
+                      : 'rgba(42,52,66,0.6)',
+                  zIndex: 2000
+                }}
               >
-                {b.tile.name}
-              </div>
-              <div
-                className="font-hud text-[9px] leading-tight tracking-[0.18em] uppercase"
-                style={{ color: active ? 'var(--ember)' : 'var(--muted)', opacity: active ? 0.85 : 0.65 }}
-              >
-                {b.tile.openCount}× · {b.ring === 0 ? 'INNER' : `R${b.ring + 1}`}
-              </div>
+                <div
+                  className="truncate font-hud text-[11px] leading-tight tracking-[0.14em] uppercase"
+                  style={{
+                    color:
+                      visible[sel]?.tile.id === b.tile.id ? 'var(--ember)' : 'var(--paper)'
+                  }}
+                >
+                  {b.tile.name}
+                </div>
+                <div
+                  className="truncate font-hud text-[9px] leading-tight tracking-[0.18em] uppercase"
+                  style={{
+                    color: visible[sel]?.tile.id === b.tile.id ? 'var(--ember)' : 'var(--muted)',
+                    opacity: visible[sel]?.tile.id === b.tile.id ? 0.85 : 0.65
+                  }}
+                >
+                  {b.tile.openCount}× · AU {b.au.toFixed(1)}
+                </div>
+              </button>
             </div>
-          )
-        })}
+          ) : null
+        )}
 
         {/* HUD */}
         <div className="pointer-events-none absolute inset-0">
@@ -313,7 +487,7 @@ export function OrbitView({
               className="font-hud text-[10px] tracking-[0.18em] uppercase"
               style={{ color: 'var(--muted)' }}
             >
-              {visible.length}/{layout.bodies.length} · ←→ MOVE · ↵ LAUNCH
+              {visible.length}/{layout.bodies.length} · HOVER SELECT · CLICK/↵ LAUNCH
             </div>
           </div>
 
