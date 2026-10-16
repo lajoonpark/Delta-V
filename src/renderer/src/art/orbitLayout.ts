@@ -557,18 +557,24 @@ export function solveCallouts(
     }
 
     // Live positions: ease toward the target, then re-separate so reordering
-    // plates flow around each other rather than passing through.
+    // plates flow around each other rather than passing through. The
+    // separation runs over the plates' *current* heights (sorted, so the array
+    // is monotonic) and its result is eased in too: snapping straight to a
+    // freshly separated column made a plate jump a whole slot in a single frame
+    // whenever two planets crossed and swapped slot order — the label flicker.
     const sorted = [...group].sort((a, b) => a.cy - b.cy)
     for (let i = 0; i < n; i++) {
       const st = states.get(sorted[i].tile.id) as CalloutSmooth
       st.labelY += (targets[i] - st.labelY) * ease
     }
-    const live = sorted.map((b) => (states.get(b.tile.id) as CalloutSmooth).labelY)
+    const pairs = sorted.map((b) => ({ b, st: states.get(b.tile.id) as CalloutSmooth }))
+    pairs.sort((p, q) => p.st.labelY - q.st.labelY)
+    const live = pairs.map((p) => p.st.labelY)
     separateColumn(live, gap, padTop, padBottom, h)
     for (let i = 0; i < n; i++) {
-      const st = states.get(sorted[i].tile.id) as CalloutSmooth
-      st.labelY = live[i]
-      sorted[i].endY = live[i]
+      const { b, st } = pairs[i]
+      st.labelY += (live[i] - st.labelY) * ease
+      b.endY = st.labelY
     }
   }
 
