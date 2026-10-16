@@ -14,31 +14,41 @@ import { TabBar } from '@renderer/components/TabBar'
 import { OrbitView } from '@renderer/components/OrbitView'
 import { TerminalPane } from './TerminalPane'
 import { IconButton } from '@renderer/components/ui'
-import { layoutOrbit, RING_AT_LAUNCHES } from '@renderer/art/orbitLayout'
+import { layoutOrbit } from '@renderer/art/orbitLayout'
 import { layoutLanderStage } from '@renderer/art/landerLayout'
 import {
-  domPlanetRect,
+  LAUNCH_CINEMATIC_MS,
+  LAUNCH_STAGE_UNMOUNT_MS,
+  shouldPlayLaunchCinematic,
+  type Frame
+} from '@renderer/art/cameraDolly'
+import {
+  createLaunchSkipController,
   layerEnterStyle,
   layerExitStyle,
-  runPlanetFlight,
-  type FlightHandle,
+  type LaunchSkipController,
   type PlanetRect
 } from '@renderer/components/viewTransition'
+import type { OrbitSceneHandle } from '@renderer/components/orbitScene'
+import type { LanderSceneHandle } from '@renderer/components/landerScene'
 
 /**
  * Main window: repo grid (or first-run welcome), switching to a
  * sidebar + tabbed-terminal layout once sessions are open.
  *
- * View changes run as one continuous camera move: a shared planet flies
- * between the views while the outgoing/incoming layers do a damped zoom
- * (see components/viewTransition.ts). Length = `transitionDurationMs`
- * (0 = cut), skippable via `skipTransitionShortcut`, and reduced-motion
- * always cuts to the end states.
+ * View changes run as one continuous camera move. Orbit ↔ stage is a real
+ * camera dolly: the orbit scene's camera pushes into the selected planet until
+ * it fills the lander stage's planet rect (match-move — see
+ * art/cameraDolly.ts), then the two scenes dissolve over a short handoff, and
+ * the stage's landers deploy. Stage → orbit is the same move played out. The
+ * layers themselves never scale or fly a sprite in these paths — the camera
+ * does the work, so there is one planet, one lighting model, one focal point.
  *
- * The flying planet only joins orbit ↔ stage (both sides are lit spheres).
- * Transitions that touch the sidebar's flat mini-planets cross-fade the
- * layers without it — a 3D planet must never animate into a flat one — and
- * landing on the terminal after a launch is a plain cut.
+ * Transitions that touch the terminal (or the ⌘O overlay) still do the damped
+ * layer zoom (see components/viewTransition.ts) — a 3D planet must never
+ * animate into the sidebar's flat mini-planets. Length =
+ * `transitionDurationMs` (0 = cut), skippable via `skipTransitionShortcut`,
+ * and reduced-motion always cuts to the end states.
  */
 
 type ViewKey = 'orbit' | 'stage' | 'terminal'
@@ -49,13 +59,15 @@ type TransitionKind =
   | 'back-to-orbit'
   | 'open-overlay'
   | 'close-overlay'
+  | 'launch-to-terminal'
 
 const VIEW_OF: Record<TransitionKind, { from: ViewKey; to: ViewKey }> = {
   'dive-to-stage': { from: 'orbit', to: 'stage' },
   'rise-to-stage': { from: 'terminal', to: 'stage' },
   'back-to-orbit': { from: 'stage', to: 'orbit' },
   'open-overlay': { from: 'terminal', to: 'orbit' },
-  'close-overlay': { from: 'orbit', to: 'terminal' }
+  'close-overlay': { from: 'orbit', to: 'terminal' },
+  'launch-to-terminal': { from: 'stage', to: 'terminal' }
 }
 
 /** Damped zooms per direction: the outgoing layer moves, the incoming settles. */
@@ -64,14 +76,26 @@ const CHOREO: Record<TransitionKind, { outScale: number; inScale: number }> = {
   'rise-to-stage': { outScale: 1.9, inScale: 1.14 },
   'back-to-orbit': { outScale: 0.62, inScale: 1.14 },
   'open-overlay': { outScale: 0.85, inScale: 1.14 },
-  'close-overlay': { outScale: 1.7, inScale: 1.06 }
+  'close-overlay': { outScale: 1.7, inScale: 1.06 },
+  'launch-to-terminal': { outScale: 1, inScale: 1 }
 }
+
+/**
+ * Camera-dolly transitions: the orbit scene owns the motion and the layers
+ * only cross-dissolve at the handoff (end of a dive / start of a rise).
+ */
+const DOLLY_KINDS = new Set<TransitionKind>(['dive-to-stage', 'back-to-orbit'])
+/** Cross-fade window (ms) where the two planets already agree on screen. */
+const HANDOFF_MS = 200
 
 interface ActiveTransition {
   kind: TransitionKind
   tile: RepoTile
   phase: 'pending' | 'running'
-  rects: { from: PlanetRect; to: PlanetRect } | null
+  /** The stage layer joins late on a dive and leaves early on a rise. */
+  stageVisible: boolean
+  /** Destination of a launch-to-terminal cinematic (window HUD vs tab reveal). */
+  launchMode?: 'tab' | 'window'
 }
 
 function centerRect(): PlanetRect {
@@ -89,15 +113,28 @@ export function MainWindow(): React.ReactElement {
   const [settingsOpen, setSettingsOpen] = useState<SettingsTab | null>(null)
   const [orbitOpen, setOrbitOpen] = useState(false)
   const [transition, setTransition] = useState<ActiveTransition | null>(null)
-  const flightRef = useRef<FlightHandle | null>(null)
-  const timerRef = useRef<number | null>(null)
+  /** Skip cut: mount/refresh the stage at its end state (no entrance). */
+  const [stageInstant, setStageInstant] = useState(false)
+  /** Error surfaced by the stage after a failed launch (restored on abort). */
+  const [launchError, setLaunchError] = useState<string | null>(null)
+  const timersRef = useRef<number[]>([])
   const contentRef = useRef<HTMLDivElement>(null)
-  const [contentBox, setContentBox] = useState({ left: 0, top: 0, width: 0, height: 0 })
+  const [contentBox, setContentBox] = useState({ left: 0, top: 0, height: 0, width: 0 })
+
+  const orbitSceneRef = useRef<OrbitSceneHandle | null>(null)
+  const landerSceneRef = useRef<LanderSceneHandle | null>(null)
+  /** Enter/shortcut skip controller for the launch-to-terminal cinematic. */
+  const launchSkipRef = useRef<LaunchSkipController | null>(null)
+  /** Spin phase sampled at the handoff so the stage starts on the same face. */
+  const stageSpinRef = useRef(0)
+  /** Bumped per transition so a stale scene callback can't end a newer one. */
+  const runIdRef = useRef(0)
 
   const hasSessions = sessions.length > 0
   const isScanning = Object.keys(scanning).length > 0
   const modalOpen = pickerTile !== null || settingsOpen !== null
   const transitionMs = settings?.transitionDurationMs ?? 800
+  const handoffMs = Math.min(HANDOFF_MS, transitionMs)
 
   // Keep the active tab valid: prefer the current one, else the newest.
   useEffect(() => {
@@ -121,73 +158,131 @@ export function MainWindow(): React.ReactElement {
     return () => ro.disconnect()
   }, [ready])
 
+  const contentBoxRef = useRef(contentBox)
+  contentBoxRef.current = contentBox
+
   const orbitLayout = useMemo(
     () => layoutOrbit(tiles, contentBox.width, contentBox.height),
     [tiles, contentBox.width, contentBox.height]
   )
 
-  // ── Shared-planet rects (viewport coordinates) ──
-  // The orbit view registers its planet wrappers (keyed `orbit:<tile id>`) and
-  // keeps them at their live drifting positions, so flight endpoints always
-  // land on the planet where it actually is right now.
-  const orbitRect = useCallback((tileId: string): PlanetRect | null => {
-    return domPlanetRect(`orbit:${tileId}`)
-  }, [])
-
-  const stageRect = useCallback((): PlanetRect => {
+  // ── The dive's target framing: the lander stage's planet rect, in the orbit
+  //    canvas's own pixels. Re-read live so a resize mid-dolly re-solves. ──
+  const stageFrame = useCallback((): Frame => {
     const L = layoutLanderStage(1, window.innerWidth, window.innerHeight)
+    const box = contentBoxRef.current
     return {
-      x: L.planet.x - L.planet.radius,
-      y: L.planet.y - L.planet.radius,
+      x: L.planet.x - L.planet.radius - box.left,
+      y: L.planet.y - L.planet.radius - box.top,
       size: L.planet.radius * 2
     }
   }, [])
 
-  const resolveRects = useCallback(
-    (kind: TransitionKind, tile: RepoTile): { from: PlanetRect; to: PlanetRect } | null => {
-      // The flying planet only joins orbit ↔ stage. Transitions that involve
-      // the sidebar's flat mini-planets have no shared-element flight: a 3D
-      // planet must never animate into a flat one (or the reverse).
-      if (kind !== 'dive-to-stage' && kind !== 'back-to-orbit') return null
-      const orbit = orbitRect(tile.id)
-      if (!orbit) return null
-      return kind === 'dive-to-stage'
-        ? { from: orbit, to: stageRect() }
-        : { from: stageRect(), to: orbit }
-    },
-    [orbitRect, stageRect]
-  )
-
   // ── Transition control ──
-  const clearTimer = (): void => {
-    if (timerRef.current !== null) {
-      window.clearTimeout(timerRef.current)
-      timerRef.current = null
-    }
+  const clearTimers = (): void => {
+    for (const id of timersRef.current) window.clearTimeout(id)
+    timersRef.current = []
+  }
+  const pushTimer = (fn: () => void, ms: number): void => {
+    timersRef.current.push(window.setTimeout(fn, ms))
   }
 
-  const skipTransition = useCallback(() => {
-    clearTimer()
-    flightRef.current?.skip()
-    flightRef.current = null
+  const finishTransition = useCallback(() => {
+    clearTimers()
+    launchSkipRef.current = null
     setTransition(null)
   }, [])
 
+  const skipTransition = useCallback(() => {
+    clearTimers()
+    runIdRef.current++
+    const wasLaunch = launchSkipRef.current !== null || transition?.kind === 'launch-to-terminal'
+    launchSkipRef.current = null
+    if (wasLaunch) {
+      // Cut straight to the reveal — no black! The stage has already unmounted
+      // (or is about to); go straight to the spawned terminal.
+      setPickerTile(null)
+      setOrbitOpen(false)
+      finishTransition()
+      return
+    }
+    // Land the dolly on its end pose and the landers in their slots, then cut
+    // straight to the end states. Scene callbacks fire once and are stale-
+    // guarded, so this can safely call both paths.
+    orbitSceneRef.current?.skipMove()
+    landerSceneRef.current?.skip()
+    setStageInstant(true)
+    finishTransition()
+  }, [finishTransition, transition])
+
   const startTransition = useCallback(
     (kind: TransitionKind, tile: RepoTile | null) => {
-      clearTimer()
-      flightRef.current?.skip()
-      flightRef.current = null
+      clearTimers()
+      runIdRef.current++
+      orbitSceneRef.current?.skipMove()
       const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
       if (!tile || reduce || transitionMs <= 0) {
         // Motion off: cut straight to the end states.
         setTransition(null)
+        setStageInstant(false)
         return
       }
-      setTransition({ kind, tile, phase: 'pending', rects: null })
+      setStageInstant(false)
+      stageSpinRef.current = 0
+      setTransition({
+        kind,
+        tile,
+        phase: 'pending',
+        // The stage joins at the handoff on a dive; everywhere else it is up
+        // (or irrelevant) from the start.
+        stageVisible: kind !== 'dive-to-stage'
+      })
     },
     [transitionMs]
   )
+
+  const startLaunchTransition = useCallback(
+    (tile: RepoTile, mode: 'tab' | 'window', triggeredByKey: boolean): boolean => {
+      clearTimers()
+      runIdRef.current++
+      orbitSceneRef.current?.skipMove()
+      setLaunchError(null)
+      const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      if (!shouldPlayLaunchCinematic(transitionMs, reduce)) {
+        launchSkipRef.current = null
+        setTransition(null)
+        setStageInstant(false)
+        return false
+      }
+      setPickerTile(null)
+      setOrbitOpen(false)
+      setStageInstant(false)
+      launchSkipRef.current = createLaunchSkipController({
+        triggeredByKey,
+        skipShortcut: settings?.skipTransitionShortcut ?? 'mod+shift+s',
+        isMac
+      })
+      setTransition({
+        kind: 'launch-to-terminal',
+        tile,
+        phase: 'pending',
+        stageVisible: true,
+        launchMode: mode
+      })
+      return true
+    },
+    [transitionMs, settings?.skipTransitionShortcut]
+  )
+
+  const abortLaunchTransition = useCallback((tile: RepoTile, error: string) => {
+    clearTimers()
+    runIdRef.current++
+    launchSkipRef.current = null
+    setTransition(null)
+    setStageInstant(true)
+    setLaunchError(error)
+    setPickerTile(tile)
+  }, [])
 
   const activeTile = ((): RepoTile | null => {
     const session = sessions.find((s) => s.id === activeId) ?? sessions[sessions.length - 1]
@@ -206,30 +301,72 @@ export function MainWindow(): React.ReactElement {
     startTransition('close-overlay', tile)
   }
 
-  // Run the flight + layer zooms once the layers have committed (so DOM rects
-  // like the sidebar mini-planet are measurable before the flight starts).
+  // Run the move once the layers have committed (so the orbit scene exists
+  // before we ask it for a camera).
   useEffect(() => {
     if (!transition || transition.phase !== 'pending') return
     let cancelled = false
+    const runId = runIdRef.current
     const raf = requestAnimationFrame(() =>
       requestAnimationFrame(() => {
-        if (cancelled) return
-        const rects = resolveRects(transition.kind, transition.tile)
-        setTransition({ ...transition, phase: 'running', rects })
-        if (rects) {
-          flightRef.current = runPlanetFlight({
-            seed: transition.tile.name,
-            ring: transition.tile.openCount >= RING_AT_LAUNCHES,
-            from: rects.from,
-            to: rects.to,
-            durationMs: transitionMs
+        if (cancelled || runId !== runIdRef.current) return
+        const { kind, tile } = transition
+        setTransition({ ...transition, phase: 'running' })
+
+        if (kind === 'launch-to-terminal') {
+          // Unmount the stage behind full black right before the curtain lifts.
+          pushTimer(() => {
+            if (runId !== runIdRef.current) return
+            setTransition((t) =>
+              t && runId === runIdRef.current ? { ...t, stageVisible: false } : t
+            )
+          }, LAUNCH_STAGE_UNMOUNT_MS)
+          pushTimer(() => {
+            if (runId === runIdRef.current) finishTransition()
+          }, LAUNCH_CINEMATIC_MS)
+        } else if (DOLLY_KINDS.has(kind)) {
+          const scene = orbitSceneRef.current
+          const mode = kind === 'dive-to-stage' ? 'dive' : 'rise'
+          if (kind === 'back-to-orbit') {
+            // Start the pull-out on the stage's face so the dissolve shows one
+            // planet, not two half-rotated ones.
+            const phase = landerSceneRef.current?.spinPhase()
+            if (phase != null) scene?.setSpinPhase(tile.id, phase)
+          }
+          scene?.cameraMove({
+            tileId: tile.id,
+            getTarget: stageFrame,
+            mode,
+            durationMs: transitionMs,
+            onDone: () => {
+              if (runId === runIdRef.current) finishTransition()
+            }
           })
+          if (kind === 'dive-to-stage') {
+            // The stage joins already framed at the same rect, and dissolves
+            // in over the handoff while the dolly settles onto it.
+            pushTimer(() => {
+              if (runId !== runIdRef.current) return
+              stageSpinRef.current = orbitSceneRef.current?.spinPhase(tile.id) ?? 0
+              setTransition((t) => (t && runId === runIdRef.current ? { ...t, stageVisible: true } : t))
+            }, Math.max(0, transitionMs - handoffMs))
+          } else {
+            // The stage dissolves over the handoff; the camera pulls out from
+            // under it and reveals the chrome on the way.
+            pushTimer(() => {
+              if (runId !== runIdRef.current) return
+              setTransition((t) => (t && runId === runIdRef.current ? { ...t, stageVisible: false } : t))
+            }, handoffMs)
+          }
+          // Safety net: never hang if the scene can't run the move.
+          pushTimer(() => {
+            if (runId === runIdRef.current) finishTransition()
+          }, transitionMs + 100)
+        } else {
+          pushTimer(() => {
+            if (runId === runIdRef.current) finishTransition()
+          }, transitionMs)
         }
-        clearTimer()
-        timerRef.current = window.setTimeout(() => {
-          flightRef.current = null
-          setTransition(null)
-        }, transitionMs)
       })
     )
     return () => {
@@ -241,8 +378,8 @@ export function MainWindow(): React.ReactElement {
 
   useEffect(
     () => () => {
-      clearTimer()
-      flightRef.current?.skip()
+      clearTimers()
+      orbitSceneRef.current?.skipMove()
     },
     []
   )
@@ -250,6 +387,18 @@ export function MainWindow(): React.ReactElement {
   // ── Global shortcuts: ⌘, settings · ⌘W close tab · sidebar/orbit/skip ──
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      if (launchSkipRef.current) {
+        const action = launchSkipRef.current.onKeyDown(e)
+        if (action === 'skip') {
+          e.preventDefault()
+          skipTransition()
+          return
+        }
+        if (action === 'consume') {
+          e.preventDefault()
+          return
+        }
+      }
       if (isMac ? e.metaKey : e.ctrlKey) {
         const key = e.key.toLowerCase()
         if (key === ',') {
@@ -282,8 +431,15 @@ export function MainWindow(): React.ReactElement {
         else openOverlay()
       }
     }
+    const onKeyUp = (e: KeyboardEvent): void => {
+      launchSkipRef.current?.onKeyUp(e)
+    }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKeyUp)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     activeId,
@@ -308,6 +464,7 @@ export function MainWindow(): React.ReactElement {
 
   // ── View actions (each pairs the state change with its transition) ──
   const select = (tile: RepoTile): void => {
+    setLaunchError(null)
     startTransition(hasSessions ? 'rise-to-stage' : 'dive-to-stage', tile)
     setPickerTile(tile)
   }
@@ -330,12 +487,16 @@ export function MainWindow(): React.ReactElement {
   }
 
   // ── Layer mounting + cross-fade styles ──
-  const stageTile =
+  const dollyActive = transition !== null && DOLLY_KINDS.has(transition.kind)
+  const stageWanted =
     pickerTile ?? (transition && VIEW_OF[transition.kind].from === 'stage' ? transition.tile : null)
+  const stageTile = stageWanted && (transition === null || transition.stageVisible) ? stageWanted : null
   const mountTerminal =
     hasSessions ||
     (transition !== null &&
-      (VIEW_OF[transition.kind].to === 'terminal' || VIEW_OF[transition.kind].from === 'terminal'))
+      (transition.kind === 'launch-to-terminal'
+        ? transition.launchMode === 'tab'
+        : VIEW_OF[transition.kind].to === 'terminal' || VIEW_OF[transition.kind].from === 'terminal'))
   const mountOrbit =
     !hasSessions ||
     orbitOpen ||
@@ -345,24 +506,50 @@ export function MainWindow(): React.ReactElement {
 
   const styleFor = (view: ViewKey): React.CSSProperties | undefined => {
     if (!transition) return undefined
+    if (transition.kind === 'launch-to-terminal') {
+      // The 3D scene and the window-level black overlay own this transition;
+      // the layers stay put and inert (no scale/zoom).
+      return { pointerEvents: 'none' }
+    }
     const ends = VIEW_OF[transition.kind]
+    if (DOLLY_KINDS.has(transition.kind)) {
+      // The orbit camera does the moving; the layers only dissolve over the
+      // handoff and stay inert so a stray click can't re-trigger a launch.
+      const inert: React.CSSProperties = { pointerEvents: 'none' }
+      if (transition.kind === 'dive-to-stage') {
+        // The stage joins at the handoff and dissolves up over the still frame.
+        return view === 'stage'
+          ? { ...inert, animation: `layer-fade-in ${handoffMs}ms ease both` }
+          : inert
+      }
+      // back-to-orbit: the stage dissolves as the camera starts pulling out.
+      return view === 'stage'
+        ? { ...inert, animation: `layer-fade-out ${handoffMs}ms ease both` }
+        : inert
+    }
     if (transition.phase === 'pending') {
       return ends.to === view ? { opacity: 0 } : undefined
     }
     const choreo = CHOREO[transition.kind]
-    const rects = transition.rects
     if (ends.from === view) {
-      return layerExitStyle(transitionMs, choreo.outScale, rects?.from ?? centerRect())
+      return layerExitStyle(transitionMs, choreo.outScale, centerRect())
     }
     if (ends.to === view) {
-      return layerEnterStyle(transitionMs, choreo.inScale, rects?.to ?? centerRect())
+      return layerEnterStyle(transitionMs, choreo.inScale, centerRect())
     }
     return undefined
   }
 
   const showWelcome = roots.length === 0
-  // Keys flow to the layer being transitioned to (the outgoing one stays inert).
+  // Keys flow to the layer being transitioned to (the outgoing one stays inert),
+  // except mid-dolly where nothing should take input until the move lands.
   const incomingView = transition ? VIEW_OF[transition.kind].to : null
+  const chromeFade = dollyActive
+    ? {
+        mode: (transition.kind === 'dive-to-stage' ? 'out' : 'in') as 'out' | 'in',
+        totalMs: transitionMs
+      }
+    : null
 
   return (
     <div className="flex h-full flex-col bg-zinc-50 dark:bg-zinc-950">
@@ -391,9 +578,13 @@ export function MainWindow(): React.ReactElement {
               <div className="absolute inset-0" style={styleFor('orbit')}>
                 <OrbitView
                   layout={orbitLayout}
-                  keyboardActive={!modalOpen && (transition === null || incomingView === 'orbit')}
+                  keyboardActive={
+                    !modalOpen && !dollyActive && (transition === null || incomingView === 'orbit')
+                  }
                   instant={transition !== null}
                   selectedTileId={transition?.tile.id ?? null}
+                  handleRef={orbitSceneRef}
+                  chromeFade={chromeFade}
                   onSelect={select}
                   onDismiss={closeOverlay}
                 />
@@ -418,8 +609,18 @@ export function MainWindow(): React.ReactElement {
           <div className="fixed inset-0 z-50" style={styleFor('stage')}>
             <LanderStage
               tile={stageTile}
-              keyboardActive={transition === null || incomingView === 'stage'}
-              instant={transition !== null}
+              keyboardActive={
+                !dollyActive && (transition === null || incomingView === 'stage')
+              }
+              instant={transition !== null || stageInstant}
+              initialSpin={stageSpinRef.current}
+              entranceMs={stageInstant ? 0 : transitionMs}
+              handleRef={landerSceneRef}
+              initialError={launchError}
+              onLaunchStart={({ mode, triggeredByKey }) =>
+                startLaunchTransition(stageTile, mode, triggeredByKey)
+              }
+              onLaunchAbort={(err) => abortLaunchTransition(stageTile, err)}
               onClose={closeStage}
               onManageAgents={() => {
                 setPickerTile(null)
@@ -427,6 +628,17 @@ export function MainWindow(): React.ReactElement {
               }}
             />
           </div>
+        )}
+
+        {transition?.kind === 'launch-to-terminal' && transition.phase === 'running' && (
+          <div
+            aria-hidden
+            className="pointer-events-auto fixed inset-0 z-[60]"
+            style={{
+              background: '#000000',
+              animation: `launch-black ${LAUNCH_CINEMATIC_MS}ms ease-in-out both`
+            }}
+          />
         )}
       </div>
 

@@ -6,11 +6,11 @@
  */
 
 export interface LanderSlot {
-  /** Sprite center + box size (px). */
+  /** Lander center + box size (px). */
   x: number
   y: number
   size: number
-  /** Leader line: sprite rim → knee → end tick. */
+  /** Leader line: lander rim → knee → end tick. */
   startX: number
   startY: number
   kneeX: number
@@ -61,8 +61,8 @@ export function layoutLanderStage(
     const t = count > 1 ? i / (count - 1) : 0.5
     const x = width * (0.475 + (i % 2) * 0.085)
     const y = top + t * (bottom - top)
-    const startX = x + size * 0.42
-    const startY = y - size * 0.12
+    const startX = x + size * 0.32
+    const startY = y - size * 0.1
     const endY = startY - out * 0.8
     slots.push({
       x,

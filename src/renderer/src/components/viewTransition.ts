@@ -1,131 +1,19 @@
 /**
- * Cross-view transition primitives: the shared "flying planet" that carries
- * the eye between views, plus a viewport-coordinate rect registry for planets
- * that live in the DOM (sidebar mini-planets).
+ * Cross-view transition primitives: the layer cross-fade styles used by the
+ * transitions that still move whole views (terminal ↔ stage, overlay open and
+ * close). Orbit ↔ stage needs none of this — its camera dollies in-scene (see
+ * art/cameraDolly.ts) and the layers only dissolve over a short handoff.
  *
- * All rects are viewport coordinates (top-left + diameter) so the flight can
- * bridge any two layers regardless of their positioning context.
+ * Rects are viewport coordinates (top-left + diameter) and set each layer's
+ * transform origin, so the zoom reads as pushing toward the focal point.
  */
-import { snapshotPlanet } from '@renderer/art/planet3d'
+
+import { shortcutMatches, type ShortcutEventLike } from '@shared/types'
 
 export interface PlanetRect {
   x: number
   y: number
   size: number
-}
-
-/** Damped settle, matching the lander scene's `1-(1-t)^4`. */
-export function easeDamped(t: number): number {
-  return 1 - Math.pow(1 - t, 4)
-}
-
-// ── DOM planet registry (sidebar mini-planets) ──────────────────────────
-
-const domPlanets = new Map<string, HTMLElement>()
-
-export function registerDomPlanet(id: string, el: HTMLElement | null): void {
-  if (el) domPlanets.set(id, el)
-  else domPlanets.delete(id)
-}
-
-export function domPlanetRect(id: string): PlanetRect | null {
-  const el = domPlanets.get(id)
-  if (!el || !el.isConnected) return null
-  const r = el.getBoundingClientRect()
-  if (r.width <= 0) return null
-  return { x: r.left, y: r.top, size: r.width }
-}
-
-// ── Flying planet ───────────────────────────────────────────────────────
-
-export interface FlightSpec {
-  seed: string
-  ring: boolean
-  from: PlanetRect
-  to: PlanetRect
-  durationMs: number
-}
-
-export interface FlightHandle {
-  /** Jump to the end state immediately. */
-  skip(): void
-  /** Resolves when the flight is finished or skipped. */
-  finished: Promise<void>
-}
-
-/**
- * Runs the shared-element flight: one real 3D planet render glides from `from`
- * to `to` on the damped curve, fading out over the last stretch so the
- * destination view's own planet takes over at the same spot. The sprite is a
- * three.js snapshot (same surface + lighting recipe as the stage), so it never
- * reads as a flat cutout handing off to a 3D scene.
- */
-export function runPlanetFlight(spec: FlightSpec): FlightHandle {
-  const { seed, ring, from, to } = spec
-  const durationMs = Math.max(0, spec.durationMs)
-
-  let resolveDone: () => void = () => undefined
-  const finished = new Promise<void>((r) => {
-    resolveDone = r
-  })
-
-  const host = document.createElement('div')
-  host.style.cssText =
-    'position:fixed;inset:0;pointer-events:none;z-index:60;overflow:hidden'
-  const canvas = snapshotPlanet(seed, ring, Math.max(from.size, to.size))
-  canvas.style.cssText = 'position:absolute;display:block'
-  host.appendChild(canvas)
-  document.body.appendChild(host)
-
-  let raf = 0
-  let settled = false
-  const startedAt = performance.now()
-
-  const apply = (t: number): void => {
-    const e = easeDamped(t)
-    const size = from.size + (to.size - from.size) * e
-    const x = from.x + (to.x - from.x) * e
-    const y = from.y + (to.y - from.y) * e
-    // The sprite canvas is 2× the planet diameter (ring room); park it so the
-    // planet itself rides the interpolated rect.
-    canvas.style.width = `${size * 2}px`
-    canvas.style.height = `${size * 2}px`
-    canvas.style.left = `${x - size / 2}px`
-    canvas.style.top = `${y - size / 2}px`
-    canvas.style.opacity = t < 0.55 ? '1' : `${Math.max(0, 1 - (t - 0.55) / 0.45)}`
-  }
-
-  const finish = (): void => {
-    if (settled) return
-    settled = true
-    cancelAnimationFrame(raf)
-    host.remove()
-    resolveDone()
-  }
-
-  const frame = (now: number): void => {
-    if (settled) return
-    const t = durationMs <= 0 ? 1 : Math.min(1, (now - startedAt) / durationMs)
-    apply(t)
-    if (t >= 1) finish()
-    else raf = requestAnimationFrame(frame)
-  }
-
-  if (durationMs <= 0) {
-    // Motion off: no flight at all — the end states are already on screen.
-    finish()
-  } else {
-    apply(0)
-    raf = requestAnimationFrame(frame)
-  }
-
-  return {
-    skip() {
-      apply(1)
-      finish()
-    },
-    finished
-  }
 }
 
 // ── Layer cross-fade styles ─────────────────────────────────────────────
@@ -156,4 +44,55 @@ export function layerExitStyle(
     transformOrigin: `${origin.x + origin.size / 2}px ${origin.y + origin.size / 2}px`,
     ['--layer-scale' as string]: String(toScale)
   } as React.CSSProperties
+}
+
+
+export interface LaunchSkipEvent extends ShortcutEventLike {
+  repeat?: boolean
+  isComposing?: boolean
+  keyCode?: number
+}
+
+export interface LaunchSkipController {
+  /** Feed window keyup events (arms Enter skip after the launching Enter key is released). */
+  onKeyUp(e: { key: string; isComposing?: boolean; keyCode?: number }): void
+  /**
+   * Feed window keydown events during the launch transition:
+   * - 'skip': cut straight to the terminal reveal (fresh Enter after keyup, or skipShortcut)
+   * - 'consume': swallow the key so it cannot leak or dismiss (held Enter repeat, Escape)
+   * - 'ignore': unrelated key or IME composition
+   */
+  onKeyDown(e: LaunchSkipEvent): 'skip' | 'consume' | 'ignore'
+  /** True once a fresh Enter keydown is allowed to skip. */
+  isEnterArmed(): boolean
+}
+
+export function createLaunchSkipController(opts: {
+  triggeredByKey: boolean
+  skipShortcut: string
+  isMac: boolean
+}): LaunchSkipController {
+  let enterArmed = !opts.triggeredByKey
+  return {
+    onKeyUp(e) {
+      if (e.isComposing || e.keyCode === 229) return
+      if (e.key === 'Enter') enterArmed = true
+    },
+    onKeyDown(e) {
+      if (e.isComposing || e.keyCode === 229) return 'ignore'
+      if (shortcutMatches(e, opts.skipShortcut, opts.isMac)) {
+        return e.repeat ? 'consume' : 'skip'
+      }
+      if (e.key === 'Enter') {
+        return !e.repeat && enterArmed ? 'skip' : 'consume'
+      }
+      if (e.key === 'Escape') {
+        return 'consume'
+      }
+      return 'ignore'
+    },
+    isEnterArmed() {
+      return enterArmed
+    }
+  }
 }

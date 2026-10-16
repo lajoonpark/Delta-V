@@ -5,6 +5,13 @@
  * its orbit. The camera mirrors `CAM` from orbitLayout exactly, so the DOM
  * callouts can project screen positions without the renderer.
  *
+ * The camera is animatable: `cameraMove()` dollies the real camera into (or
+ * out of) a planet until it fills an exact screen rect — the match-move that
+ * carries the orbit → stage transition (see art/cameraDolly.ts). During a
+ * move the focused planet's orbit freezes (its spin keeps going), the sun,
+ * orbit lines and the other planets fade away, and the lights drift toward
+ * the lander stage's recipe so the handoff lands without a lighting pop.
+ *
  * Art stays owned by the 2D generators — planets are `buildPlanet` groups over
  * the shared equirect surface; lighting does the day/night terminator.
  */
@@ -19,6 +26,14 @@ import {
   orbitPoint,
   type OrbitBody
 } from '@renderer/art/orbitLayout'
+import {
+  easeInOut,
+  frameOf,
+  lerp,
+  lerpFrame,
+  solveFocusCamera,
+  type Frame
+} from '@renderer/art/cameraDolly'
 import { hashSeed, mulberry32 } from '@renderer/art/planetGen'
 
 export interface OrbitSceneOptions {
@@ -29,12 +44,32 @@ export interface OrbitSceneOptions {
   reducedMotion: boolean
 }
 
+export interface CameraMoveSpec {
+  /** Planet to lock onto (its live world position tracks every frame). */
+  tileId: string
+  /** Desired framing in canvas pixels — re-read live, so resizes re-solve. */
+  getTarget: () => Frame
+  /** 'dive': home pose → target. 'rise': target → home pose. */
+  mode: 'dive' | 'rise'
+  durationMs: number
+  /** Fires exactly once when the move completes, is skipped, or aborts. */
+  onDone?: () => void
+}
+
 export interface OrbitSceneHandle {
   /** Resize + re-sync body params. Drift angles survive across body objects. */
   update(width: number, height: number, bodies: OrbitBody[]): void
   setVisible(mask: Record<string, boolean>): void
   /** Finish the reveal instantly (skippable entrance). */
   skip(): void
+  /** Run the camera dolly; replaces any move still in flight. */
+  cameraMove(spec: CameraMoveSpec): void
+  /** Jump to the end pose of the current move (fires its onDone once). */
+  skipMove(): void
+  /** Live spin phase of a body (rad) — for the stage handoff. */
+  spinPhase(tileId: string): number | null
+  /** Seed a body's spin phase (rad) — so the rise starts on the stage's phase. */
+  setSpinPhase(tileId: string, rotationY: number): void
   dispose(): void
 }
 
@@ -57,6 +92,17 @@ const REVEAL_STAGGER = 0.09
 const REVEAL_MS = 700
 /** World-space sun glow sprite radius (kept inside the innermost orbit). */
 const GLOW_RADIUS = SUN_RADIUS * SUN_GLOW
+const ELEV = (CAM.elevationDeg * Math.PI) / 180
+/** The lander stage's camera + lights (see landerScene.ts) — matched at handoff. */
+const STAGE_FOV = 45
+const STAGE_KEY_DIR = new THREE.Vector3(-4, 3, 6)
+const ORBIT_SUN_INTENSITY = 2.4
+const ORBIT_AMBIENT_INTENSITY = 1.35
+const STAGE_AMBIENT_INTENSITY = 1.6
+/** Fraction of the move over which the chrome (sun/lines/planets) dissolves. */
+const CHROME_FADE = 0.35
+/** Fraction of the move over which the lights settle into the stage recipe. */
+const LIGHT_MIX = 0.35
 
 function easeOut(t: number): number {
   return 1 - Math.pow(1 - t, 4)
@@ -94,18 +140,18 @@ export function mountOrbitScene(opts: OrbitSceneOptions): OrbitSceneHandle {
 
   const scene = new THREE.Scene()
   const camera = new THREE.PerspectiveCamera(CAM.fovDeg, 1, 0.1, 400)
-  const applyCamera = (): void => {
-    const [cx, cy, cz] = cameraPosition(Math.max(2, width), Math.max(2, height))
-    camera.position.set(cx, cy, cz)
-    camera.lookAt(CAM.targetX, CAM.targetY, CAM.targetZ)
-  }
-  applyCamera()
 
   // Sun-lighted system: a warm key at the origin (no falloff — outer planets
-  // stay lit, art over physics) over the stage's bluish ambient floor.
-  const sunLight = new THREE.PointLight(0xfff1e0, 2.4, 0, 0)
+  // stay lit, art over physics) over the stage's bluish ambient floor. A
+  // directional key matching the lander stage is mixed in as a dive lands, so
+  // the terminator the stage shows is the one the camera arrives on.
+  const sunLight = new THREE.PointLight(0xfff1e0, ORBIT_SUN_INTENSITY, 0, 0)
   scene.add(sunLight)
-  scene.add(new THREE.AmbientLight(0x2a3442, 1.35))
+  const ambient = new THREE.AmbientLight(0x2a3442, ORBIT_AMBIENT_INTENSITY)
+  scene.add(ambient)
+  const keyLight = new THREE.DirectionalLight(0xfff1e0, 0)
+  keyLight.position.copy(STAGE_KEY_DIR)
+  scene.add(keyLight)
 
   // Sun — a soft glowing orb sprite at the origin (drives the point light).
   const glowTex = glowTexture()
@@ -242,6 +288,73 @@ export function mountOrbitScene(opts: OrbitSceneOptions): OrbitSceneHandle {
   let disposed = false
   let lastT = 0
 
+  // ── Camera dolly (match-move into/out of a planet) ─────────────────────
+  let move: (CameraMoveSpec & { startedAt: number; finished: boolean }) | null = null
+
+  const finishMove = (): void => {
+    if (!move || move.finished) return
+    move.finished = true
+    const onDone = move.onDone
+    move = null
+    onDone?.()
+  }
+
+  const moveFocus = (now: number): { focus: number; t: number } => {
+    if (!move) return { focus: 0, t: 0 }
+    const t =
+      move.durationMs <= 0 ? 1 : Math.min(1, Math.max(0, (now - move.startedAt) / move.durationMs))
+    // focus = 1 at the framed pose, 0 at the home pose.
+    const focus = move.mode === 'dive' ? easeInOut(t) : easeInOut(1 - t)
+    return { focus, t }
+  }
+
+  const homePose = (): { cx: number; cy: number; cz: number } => {
+    const [cx, cy, cz] = cameraPosition(Math.max(2, width), Math.max(2, height))
+    return { cx, cy, cz }
+  }
+
+  const applyCameraPose = (mv: typeof move, focus: number): void => {
+    const w = Math.max(2, width)
+    const h = Math.max(2, height)
+    // Pitch from the orbit elevation (home) toward the stage's head-on view.
+    const theta = -ELEV * (1 - focus)
+    const fov = lerp(CAM.fovDeg, STAGE_FOV, focus)
+    const focused = mv ? actors.get(mv.tileId) : null
+    const home = homePose()
+    if (!focused || !mv) {
+      camera.position.set(home.cx, home.cy, home.cz)
+      camera.rotation.set(-ELEV, 0, 0)
+      camera.fov = CAM.fovDeg
+      camera.updateProjectionMatrix()
+      return
+    }
+    const [wx, wz] = orbitPoint(focused.a, focused.ecc, focused.peri, focused.meanAnomaly)
+    const planet = { x: wx, y: 0, z: wz }
+    // The planet rides a straight line in screen space from wherever the home
+    // camera frames it to the target rect — exact at both ends, smooth between.
+    const homeFrame = frameOf(
+      { position: { x: home.cx, y: home.cy, z: home.cz }, theta: -ELEV, fovDeg: CAM.fovDeg },
+      w,
+      h,
+      planet,
+      focused.radius
+    )
+    const target = lerpFrame(homeFrame, mv.getTarget(), focus)
+    const pose = solveFocusCamera({
+      width: w,
+      height: h,
+      planet,
+      planetRadius: focused.radius,
+      target,
+      theta,
+      fovDeg: fov
+    })
+    camera.position.set(pose.position.x, pose.position.y, pose.position.z)
+    camera.rotation.set(pose.theta, 0, 0)
+    camera.fov = pose.fovDeg
+    camera.updateProjectionMatrix()
+  }
+
   const applySize = (): void => {
     renderer.setSize(width, height, false)
     camera.aspect = Math.max(2, width) / Math.max(2, height)
@@ -257,14 +370,39 @@ export function mountOrbitScene(opts: OrbitSceneOptions): OrbitSceneHandle {
     lastT = now
     const elapsed = (now - revealStart) / 1000
 
+    const { focus, t } = moveFocus(now)
+    if (move && !actors.has(move.tileId)) {
+      // The focused repo left the scan mid-dolly — land on the end state.
+      finishMove()
+    }
+    applyCameraPose(move, move ? focus : 0)
+
+    // Chrome dissolves early in a dive / reveals late in a rise.
+    const chrome = move
+      ? move.mode === 'dive'
+        ? 1 - Math.min(1, t / CHROME_FADE)
+        : Math.max(0, (t - CHROME_FADE) / (1 - CHROME_FADE))
+      : 1
+    const mix = move ? Math.min(1, Math.max(0, (focus - (1 - LIGHT_MIX)) / LIGHT_MIX)) : 0
+    sunLight.intensity = ORBIT_SUN_INTENSITY * (1 - mix)
+    keyLight.intensity = ORBIT_SUN_INTENSITY * mix
+    ambient.intensity = lerp(ORBIT_AMBIENT_INTENSITY, STAGE_AMBIENT_INTENSITY, mix)
+    ;(sunSprite.material as THREE.SpriteMaterial).opacity = chrome
+    for (const line of orbitLines.values()) {
+      ;(line.material as THREE.LineBasicMaterial).opacity = 0.38 * chrome
+    }
+
     let i = 0
     for (const b of bodies) {
       const actor = actors.get(b.tile.id)
       if (!actor) continue
+      const isFocus = move?.tileId === b.tile.id
+      // A locked-on planet keeps spinning but stops sliding along its orbit.
+      const drift = isFocus ? 1 - focus : 1
       if (!reducedMotion) {
         // Keplerian drift: mean anomaly advances at the orbit's own rate, so
         // planets sweep faster near perihelion and inner ones lapping outer.
-        actor.meanAnomaly += actor.meanMotion * dt
+        actor.meanAnomaly += actor.meanMotion * dt * drift
         actor.spinMesh.rotation.y += dt * ((Math.PI * 2) / actor.spinPeriod)
       }
       b.meanAnomaly = actor.meanAnomaly
@@ -277,13 +415,15 @@ export function mountOrbitScene(opts: OrbitSceneOptions): OrbitSceneHandle {
         : Math.max(0, Math.min(1, (elapsed - i * REVEAL_STAGGER) / (REVEAL_MS / 1000)))
       i++
       const e = easeOut(local)
-      const s = actor.radius * (0.2 + 0.8 * e)
+      const s = actor.radius * (0.2 + 0.8 * e) * (isFocus ? 1 : chrome)
       actor.group.scale.setScalar(s)
       const want = visibleMask[b.tile.id] === false ? 0 : 1
       actor.group.visible = want > 0 && s > 0.001
     }
 
     renderer.render(scene, camera)
+    // The move is done once playback reaches the end — land it and report once.
+    if (move && t >= 1) finishMove()
   }
   requestAnimationFrame((t) => {
     lastT = t
@@ -295,7 +435,6 @@ export function mountOrbitScene(opts: OrbitSceneOptions): OrbitSceneHandle {
       width = nextWidth
       height = nextHeight
       applySize()
-      applyCamera()
       syncBodies(nextBodies)
     },
     setVisible(mask) {
@@ -304,8 +443,31 @@ export function mountOrbitScene(opts: OrbitSceneOptions): OrbitSceneHandle {
     skip() {
       revealDone = true
     },
+    cameraMove(spec) {
+      if (move && !move.finished) {
+        move.finished = true
+        move.onDone?.()
+      }
+      move = { ...spec, startedAt: performance.now(), finished: false }
+      if (spec.durationMs <= 0) finishMove()
+    },
+    skipMove() {
+      // Land on the end state and report done exactly once.
+      finishMove()
+    },
+    spinPhase(tileId) {
+      return actors.get(tileId)?.spinMesh.rotation.y ?? null
+    },
+    setSpinPhase(tileId, rotationY) {
+      const actor = actors.get(tileId)
+      if (actor) actor.spinMesh.rotation.y = rotationY
+    },
     dispose() {
       disposed = true
+      if (move && !move.finished) {
+        move.finished = true
+        move.onDone?.()
+      }
       for (const actor of actors.values()) {
         scene.remove(actor.group)
         actor.dispose()

@@ -723,7 +723,7 @@ function AppearanceTab(): React.ReactElement {
       <div>
         <SectionTitle
           title="Transition speed"
-          desc="Duration of the damped-zoom view transitions (orbit launcher). 0 turns motion off entirely. Your OS reduced-motion setting always cuts straight to the end state."
+          desc="Duration of the camera dive between the orbit launcher and the lander stage (and the other damped-zoom view transitions). 0 turns motion off entirely. Your OS reduced-motion setting always cuts straight to the end state."
         />
         <div className="mt-2 flex items-center gap-3">
           <input
@@ -739,6 +739,10 @@ function AppearanceTab(): React.ReactElement {
             {settings.transitionDurationMs}ms
           </span>
         </div>
+        <p className="mt-1.5 text-[11px] text-zinc-400">
+          The stage → terminal launch sequence runs at its own fixed 2000ms length; setting this to
+          0 or very low (≤ 250ms) skips it and cuts straight to the terminal.
+        </p>
       </div>
     </section>
   )

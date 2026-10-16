@@ -5,6 +5,7 @@ import { useAppActions, useAppState } from '@renderer/state/AppProvider'
 import { isMac } from '@renderer/hooks/useTheme'
 import { layoutLanderStage } from '@renderer/art/landerLayout'
 import { RING_AT_LAUNCHES } from '@renderer/art/orbitLayout'
+import { LAUNCH_DIVE_MS } from '@renderer/art/cameraDolly'
 import { mountLanderScene, type LanderSceneHandle } from './landerScene'
 import { LeaderTicks } from './ui'
 
@@ -27,6 +28,21 @@ interface LanderStageProps {
   keyboardActive?: boolean
   /** Mount at the end state — a cross-view transition is animating the layer. */
   instant?: boolean
+  /** Initial planet spin (rad) — matched to the orbit scene at the handoff. */
+  initialSpin?: number
+  /** Landers' fly-up duration (0 = already deployed, e.g. after a skip). */
+  entranceMs?: number
+  /** Live scene handle, so the window can drive the handoff + skip. */
+  handleRef?: { current: LanderSceneHandle | null }
+  /** Error restored when a launch fails after the stage was unmounted. */
+  initialError?: string | null
+  /**
+   * Begin the window-level launch-to-terminal transition. Returns true when
+   * the cinematic is active, or false when motion is off / below floor (hard cut).
+   */
+  onLaunchStart?(opts: { mode: 'tab' | 'window'; triggeredByKey: boolean }): boolean
+  /** Abort an in-flight launch transition if spawnTerminal rejects. */
+  onLaunchAbort?(error: string): void
   onClose(reason: 'launch' | 'dismiss'): void
   onManageAgents(): void
 }
@@ -35,6 +51,12 @@ export function LanderStage({
   tile,
   keyboardActive = true,
   instant = false,
+  initialSpin,
+  entranceMs,
+  handleRef,
+  initialError,
+  onLaunchStart,
+  onLaunchAbort,
   onClose,
   onManageAgents
 }: LanderStageProps): React.ReactElement {
@@ -46,9 +68,14 @@ export function LanderStage({
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(0)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(initialError ?? null)
   const [entered, setEntered] = useState(instant)
   const [skipped, setSkipped] = useState(false)
+  const [launchMode, setLaunchMode] = useState<'tab' | 'window' | null>(null)
+  const launchingRef = useRef(false)
+  useEffect(() => {
+    if (initialError) setError(initialError)
+  }, [initialError])
 
   // Enabled agents in the user's saved order — one seeded lander each.
   const all = useMemo(() => agents.filter((a) => !a.disabled), [agents])
@@ -99,13 +126,16 @@ export function LanderStage({
       planetSeed: tile.name,
       ring: tile.openCount >= RING_AT_LAUNCHES,
       landerSeeds: all.map((a) => a.name),
-      durationMs: reduceMotion.current ? 0 : transitionMs,
-      reducedMotion: reduceMotion.current
+      durationMs: reduceMotion.current ? 0 : entranceMs ?? transitionMs,
+      reducedMotion: reduceMotion.current,
+      initialSpin
     })
     sceneRef.current = handle
+    if (handleRef) handleRef.current = handle
     return () => {
       handle.dispose()
       sceneRef.current = null
+      if (handleRef) handleRef.current = null
     }
     // Mount once per stage; later layout changes flow through update() below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -123,19 +153,44 @@ export function LanderStage({
 
   // ── Launch (spawn flow + windowMode logic from the old picker) ──
   const launch = useCallback(
-    async (agent: AgentDefinition, openInWindow: boolean): Promise<void> => {
+    async (agent: AgentDefinition, openInWindow: boolean, triggeredByKey: boolean): Promise<void> => {
+      if (launchingRef.current) return
       const windowMode = settings?.windowMode ?? 'both'
       const mode: 'tab' | 'window' =
         openInWindow || windowMode === 'windows' ? 'window' : 'tab'
+      const agentIndex = all.findIndex((a) => a.id === agent.id)
+      const cinematic = onLaunchStart?.({ mode, triggeredByKey }) ?? false
+
+      if (!cinematic) {
+        launchingRef.current = true
+        try {
+          setError(null)
+          await spawnTerminal({ repoTileId: tile.id, agentId: agent.id, mode }, tile)
+          onClose('launch')
+        } catch (err) {
+          launchingRef.current = false
+          setError(err instanceof Error ? err.message : String(err))
+        }
+        return
+      }
+
+      launchingRef.current = true
+      setError(null)
+      setLaunchMode(mode)
+      sceneRef.current?.startLaunch(agentIndex >= 0 ? agentIndex : sel, LAUNCH_DIVE_MS)
+
       try {
-        setError(null)
         await spawnTerminal({ repoTileId: tile.id, agentId: agent.id, mode }, tile)
-        onClose('launch')
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err))
+        const message = err instanceof Error ? err.message : String(err)
+        launchingRef.current = false
+        setLaunchMode(null)
+        setError(message)
+        sceneRef.current?.abortLaunch()
+        onLaunchAbort?.(message)
       }
     },
-    [settings?.windowMode, spawnTerminal, tile, onClose]
+    [settings?.windowMode, all, sel, onLaunchStart, onLaunchAbort, spawnTerminal, tile, onClose]
   )
 
   // ── Flight entrance (skippable; reduced-motion cuts to the end) ──
@@ -168,8 +223,9 @@ export function LanderStage({
   )
 
   useEffect(() => {
-    if (!keyboardActive) return
+    if (!keyboardActive || launchMode !== null) return
     const onKey = (e: KeyboardEvent): void => {
+      if (e.isComposing || e.keyCode === 229) return
       const skipHotkey = settings?.skipTransitionShortcut ?? 'mod+shift+s'
       if (shortcutMatches(e, skipHotkey, isMac)) {
         e.preventDefault()
@@ -183,10 +239,15 @@ export function LanderStage({
         e.preventDefault()
         move(-1)
       } else if (e.key === 'Enter') {
+        if (e.repeat) {
+          e.preventDefault()
+          return
+        }
         const agent = flat[sel]
         if (agent) {
           e.preventDefault()
-          void launch(agent, e.metaKey || e.ctrlKey)
+          e.stopImmediatePropagation()
+          void launch(agent, e.metaKey || e.ctrlKey, true)
         }
       } else if (e.key === 'Escape') {
         e.preventDefault()
@@ -203,7 +264,7 @@ export function LanderStage({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keyboardActive, settings?.skipTransitionShortcut, flat, sel, query, move, launch, onClose, skipTransition])
+  }, [keyboardActive, launchMode, settings?.skipTransitionShortcut, flat, sel, query, move, launch, onClose, skipTransition])
 
   useEffect(() => {
     rootRef.current?.focus()
@@ -211,10 +272,17 @@ export function LanderStage({
 
   const duration = reduceMotion.current ? 0 : transitionMs
   const animating = !reduceMotion.current && duration > 0 && !skipped
-  const wrapperStyle: React.CSSProperties = {
-    opacity: entered ? 1 : 0,
-    transition: animating ? `opacity ${duration}ms ease-out` : 'none'
-  }
+  const wrapperStyle: React.CSSProperties =
+    launchMode !== null
+      ? {
+          opacity: 0,
+          pointerEvents: 'none',
+          transition: 'opacity 280ms ease-out'
+        }
+      : {
+          opacity: entered ? 1 : 0,
+          transition: animating ? `opacity ${duration}ms ease-out` : 'none'
+        }
   const hudLeft = isMac ? 78 : 24
   const visibleIds = useMemo(() => new Set(flat.map((a) => a.id)), [flat])
   const modeHint = `OPENS IN ${settings?.windowMode === 'windows' ? 'NEW WINDOW' : 'TAB'} · ${
@@ -314,7 +382,7 @@ export function LanderStage({
             <button
               key={agent.id}
               type="button"
-              onClick={(e) => void launch(agent, e.metaKey || e.ctrlKey)}
+              onClick={(e) => void launch(agent, e.metaKey || e.ctrlKey, false)}
               onMouseEnter={() => {
                 const idx = flat.findIndex((a) => a.id === agent.id)
                 if (idx >= 0) setSelected(idx)
@@ -356,7 +424,7 @@ export function LanderStage({
               key={agent.id}
               type="button"
               aria-label={`Launch ${agent.name}`}
-              onClick={(e) => void launch(agent, e.metaKey || e.ctrlKey)}
+              onClick={(e) => void launch(agent, e.metaKey || e.ctrlKey, false)}
               onMouseEnter={() => {
                 const idx = flat.findIndex((a) => a.id === agent.id)
                 if (idx >= 0) setSelected(idx)
@@ -447,6 +515,20 @@ export function LanderStage({
           )}
         </div>
       </div>
+
+      {launchMode === 'window' && (
+        <div
+          className="pointer-events-none absolute bottom-8 left-1/2 -translate-x-1/2 rounded-sm border px-3 py-1 font-hud text-[10px] uppercase tracking-[0.24em]"
+          style={{
+            borderColor: 'rgba(255,138,61,0.45)',
+            color: 'var(--ember)',
+            background: 'rgba(18,22,30,0.72)',
+            animation: 'layer-fade-in 240ms ease 160ms both'
+          }}
+        >
+          DEPLOYED · NEW WINDOW
+        </div>
+      )}
     </div>
   )
 }

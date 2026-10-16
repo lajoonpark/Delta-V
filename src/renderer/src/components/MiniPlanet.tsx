@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { renderPlanet } from '@renderer/art/planetGen'
-import { registerDomPlanet } from './viewTransition'
 
 /** Sidebar planet growth band, log-scaled from the repo's open counter. */
 export const PLANET_SCALE_MIN = 0.8
@@ -25,27 +24,15 @@ export function sidebarPlanetScale(openCount: number): number {
 export function MiniPlanet({
   seed,
   openCount,
-  className,
-  id
+  className
 }: {
   seed: string
   openCount: number
   className?: string
-  /** Tile id — registers the element so view transitions can fly to/from it. */
-  id?: string
 }): React.ReactElement {
   const ref = useRef<HTMLCanvasElement | null>(null)
   const t = (sidebarPlanetScale(openCount) - PLANET_SCALE_MIN) / (PLANET_SCALE_MAX - PLANET_SCALE_MIN)
   const px = Math.round(MIN_PX + t * (MAX_PX - MIN_PX))
-
-  const setRefs = useCallback(
-    (el: HTMLCanvasElement | null) => {
-      ref.current = el
-      if (id) registerDomPlanet(id, el)
-    },
-    [id]
-  )
-  useEffect(() => () => registerDomPlanet(id ?? '', null), [id])
 
   useEffect(() => {
     const canvas = ref.current
@@ -62,7 +49,7 @@ export function MiniPlanet({
 
   return (
     <canvas
-      ref={setRefs}
+      ref={ref}
       aria-hidden
       style={{ width: px, height: px }}
       className={className ?? 'shrink-0'}

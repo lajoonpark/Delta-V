@@ -1,8 +1,9 @@
 /**
  * Shared 3D planet construction: one seeded sphere (the equirect surface from
- * planetGen — same seed → same planet in the orbit view, the lander stage and
- * view-transition flights) plus the milestone ring. Termini/gloss come from
- * scene lighting, never baked into the surface.
+ * planetGen — same seed → same planet in the orbit view and the lander stage)
+ * plus the milestone ring. Termini/gloss come from scene lighting, never baked
+ * into the surface. The lander stage mirrors this construction exactly so the
+ * camera-dive handoff shows one planet, not two slightly different ones.
  */
 import * as THREE from 'three'
 import { colorRamp, getPlanetEquirect, hsl, planetSpec } from './planetGen'
@@ -52,56 +53,4 @@ export function buildPlanet(seed: string, ring: boolean): PlanetBuild {
       }
     }
   }
-}
-
-/**
- * Render one lit planet to a 2D canvas (transparent background) — used for the
- * flying planet in cross-view transitions, so the sprite is a real 3D render
- * handing off to the 3D views at either end, never a flat cutout. Lights match
- * the lander stage (bluish ambient + warm key from upper-left).
- *
- * The canvas is 2× `planetPx` with the planet's diameter exactly `planetPx`
- * centered — room for the milestone ring to overflow the planet like it does
- * on the stage, without clipping at the canvas edge.
- */
-export function snapshotPlanet(seed: string, ring: boolean, planetPx: number): HTMLCanvasElement {
-  const out = document.createElement('canvas')
-  const dpr = Math.min(window.devicePixelRatio || 1, 2)
-  const canvasPx = Math.max(1, Math.round(planetPx * 2))
-  out.width = Math.max(1, Math.round(canvasPx * dpr))
-  out.height = out.width
-
-  const scratch = document.createElement('canvas')
-  const renderer = new THREE.WebGLRenderer({
-    canvas: scratch,
-    antialias: true,
-    alpha: true,
-    preserveDrawingBuffer: true
-  })
-  renderer.setClearColor(0x000000, 0)
-  renderer.setPixelRatio(dpr)
-  renderer.setSize(canvasPx, canvasPx, false)
-
-  const scene = new THREE.Scene()
-  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 50)
-  // Planet diameter (2 world units) spans half the frame → exactly planetPx.
-  camera.position.set(0, 0, 5)
-
-  scene.add(new THREE.AmbientLight(0x2a3442, 1.6))
-  const key = new THREE.DirectionalLight(0xfff1e0, 2.4)
-  key.position.set(-4, 3, 6)
-  scene.add(key)
-
-  const planet = buildPlanet(seed, ring)
-  planet.group.rotation.y = 0.6
-  planet.group.rotation.z = 0.1
-  scene.add(planet.group)
-
-  renderer.render(scene, camera)
-  const ctx = out.getContext('2d')
-  if (ctx) ctx.drawImage(scratch, 0, 0, out.width, out.height)
-
-  planet.dispose()
-  renderer.dispose()
-  return out
 }

@@ -64,6 +64,65 @@
   }
 }
 
+/* Orbit chrome (callouts/HUD) during an orbit ↔ stage camera dolly: dissolved
+   early on the dive, revealed late on the rise (see components/OrbitView.tsx).
+   The camera does the moving — these only clear the frame. */
+@keyframes chrome-out {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes chrome-in {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* Handoff cross-fade only (no scale): the orbit camera dollies into/out of the
+   planet, and the two scene layers dissolve over the short handoff window. */
+@keyframes layer-fade-in {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes layer-fade-out {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Stage → terminal launch black curtain: stays clear during planet recenter and
+   the lander's rise, then fades to true black as the lander crashes onto the
+   planet surface (the impact burst reads at the top of the ramp), holds while
+   the stage unmounts behind black, then lifts onto the terminal. */
+@keyframes launch-black {
+  0%,
+  68% {
+    opacity: 0;
+  }
+  80%,
+  84% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 :root {
   color-scheme: light dark;
   /* Space chrome — mission-control instrument panel (always dark). */
