@@ -12,3 +12,8 @@ session-*.md
 # Commit only assets/agent/ previews + final build/ icons.
 assets/production/*
 !assets/production/README.md
+
+# Local-only harness state and scratch (never shipped or shared).
+.ori/
+vibe_images/
+assets/icon-concepts/
