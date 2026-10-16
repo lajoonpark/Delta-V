@@ -55,6 +55,12 @@ export interface AppSettings {
    */
   orbitShortcut: string
   /**
+   * Repo search shortcut (default ⌘K). Opens the solar-system view's fuzzy
+   * search bar: planets filter as you type and the most likely repo is
+   * auto-selected so Enter launches it. Same normalized grammar.
+   */
+  searchShortcut: string
+  /**
    * Shortcut that instantly finishes any in-flight view transition (damped
    * zoom) instead of waiting it out. Same normalized grammar.
    */
@@ -88,6 +94,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   agentOrder: [],
   sidebarShortcut: 'mod+b',
   orbitShortcut: 'mod+o',
+  searchShortcut: 'mod+k',
   skipTransitionShortcut: 'mod+shift+s',
   transitionDurationMs: 800
 }
@@ -96,6 +103,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
 export const DEFAULT_SIDEBAR_SHORTCUT = 'mod+b'
 /** Default orbit-view launcher toggle: ⌘O on macOS, Ctrl+O elsewhere. */
 export const DEFAULT_ORBIT_SHORTCUT = 'mod+o'
+/** Default repo search: ⌘K on macOS, Ctrl+K elsewhere. */
+export const DEFAULT_SEARCH_SHORTCUT = 'mod+k'
 /** Default skip-transition combo: ⌘⇧S on macOS, Ctrl+Shift+S elsewhere. */
 export const DEFAULT_SKIP_TRANSITION_SHORTCUT = 'mod+shift+s'
 /** Default damped-zoom transition duration (ms). */

@@ -75,7 +75,7 @@ Define your own agents with full control:
 ### 🎨 Appearance & UX
 - **Themes** — System / Light / Dark with instant switching
 - **Terminal font** — Size slider (8–24px), presets (Menlo, System mono, custom)
-- **Keyboard shortcuts** — <kbd>⌘,</kbd> Settings, <kbd>⌘W</kbd> Close tab, <kbd>⌘B</kbd> Toggle sidebar
+- **Keyboard shortcuts** — <kbd>⌘,</kbd> Settings, <kbd>⌘W</kbd> Close tab, <kbd>⌘B</kbd> Toggle sidebar, <kbd>⌘K</kbd> Search repos
 - **Responsive grid** — Auto columns from 1 (mobile) to 5+ (ultrawide)
 
 ---
@@ -270,6 +270,7 @@ Each repo gets a table `repo_<tileId>` with columns: `path`, `startLine`, `endLi
 | <kbd>⌘,</kbd> / <kbd>Ctrl+,</kbd> | Open Settings |
 | <kbd>⌘W</kbd> / <kbd>Ctrl+W</kbd> | Close active terminal tab |
 | <kbd>⌘B</kbd> / <kbd>Ctrl+B</kbd> | Toggle sidebar (when sessions exist) |
+| <kbd>⌘K</kbd> / <kbd>Ctrl+K</kbd> | Search repos in the solar-system view (fuzzy; Enter launches the top match) |
 | <kbd>⌘</kbd>+Click agent | Open in new window (Both mode) |
 | <kbd>Ctrl/Cmd+Click</kbd> link | Open URL/file in system browser/editor |
 

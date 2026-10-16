@@ -4,6 +4,7 @@ import {
   BUILTIN_AGENTS,
   CustomAgent,
   DEFAULT_ORBIT_SHORTCUT,
+  DEFAULT_SEARCH_SHORTCUT,
   DEFAULT_SETTINGS,
   DEFAULT_SIDEBAR_SHORTCUT,
   DEFAULT_SKIP_TRANSITION_SHORTCUT,
@@ -23,7 +24,7 @@ import { secretsService } from './secrets'
  * and extend `migrations` so existing users upgrade transparently.
  */
 
-const SCHEMA_VERSION = 6
+const SCHEMA_VERSION = 7
 
 type StoredSettings = AppSettings & { __schemaVersion: number }
 
@@ -64,6 +65,13 @@ const migrations: Record<number, (prev: Record<string, unknown>) => StoredSettin
     next.orbitShortcut = DEFAULT_ORBIT_SHORTCUT
     next.skipTransitionShortcut = DEFAULT_SKIP_TRANSITION_SHORTCUT
     next.transitionDurationMs = DEFAULT_TRANSITION_MS
+    next.__schemaVersion = SCHEMA_VERSION
+    return next
+  },
+  // v6 → v7: added searchShortcut (repo search bar in the solar-system view)
+  6: (prev) => {
+    const next = { ...DEFAULT_SETTINGS, ...(prev as object) } as StoredSettings
+    next.searchShortcut = DEFAULT_SEARCH_SHORTCUT
     next.__schemaVersion = SCHEMA_VERSION
     return next
   }
@@ -117,6 +125,8 @@ function validate(settings: AppSettings): string[] {
     errors.push('sidebarShortcut must be a shortcut like mod+b')
   if (typeof settings.orbitShortcut !== 'string' || !normalizeShortcut(settings.orbitShortcut))
     errors.push('orbitShortcut must be a shortcut like mod+o')
+  if (typeof settings.searchShortcut !== 'string' || !normalizeShortcut(settings.searchShortcut))
+    errors.push('searchShortcut must be a shortcut like mod+k')
   if (
     typeof settings.skipTransitionShortcut !== 'string' ||
     !normalizeShortcut(settings.skipTransitionShortcut)
@@ -164,6 +174,7 @@ const SETTING_KEYS: (keyof AppSettings)[] = [
   'agentOrder',
   'sidebarShortcut',
   'orbitShortcut',
+  'searchShortcut',
   'skipTransitionShortcut',
   'transitionDurationMs'
 ]
@@ -189,6 +200,8 @@ class SettingsService {
       normalizeShortcut(this.cache.sidebarShortcut) ?? DEFAULT_SIDEBAR_SHORTCUT
     this.cache.orbitShortcut =
       normalizeShortcut(this.cache.orbitShortcut) ?? DEFAULT_ORBIT_SHORTCUT
+    this.cache.searchShortcut =
+      normalizeShortcut(this.cache.searchShortcut) ?? DEFAULT_SEARCH_SHORTCUT
     this.cache.skipTransitionShortcut =
       normalizeShortcut(this.cache.skipTransitionShortcut) ?? DEFAULT_SKIP_TRANSITION_SHORTCUT
     this.cache.transitionDurationMs = clampTransitionMs(
@@ -326,6 +339,9 @@ class SettingsService {
     }
     if ('orbitShortcut' in partial) {
       next.orbitShortcut = normalizeShortcut(next.orbitShortcut) ?? DEFAULT_ORBIT_SHORTCUT
+    }
+    if ('searchShortcut' in partial) {
+      next.searchShortcut = normalizeShortcut(next.searchShortcut) ?? DEFAULT_SEARCH_SHORTCUT
     }
     if ('skipTransitionShortcut' in partial) {
       next.skipTransitionShortcut =

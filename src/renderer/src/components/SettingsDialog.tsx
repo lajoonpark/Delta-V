@@ -17,6 +17,7 @@ import {
 import type { AgentDefinition, NewAgentPayload } from '@shared/types'
 import {
   DEFAULT_ORBIT_SHORTCUT,
+  DEFAULT_SEARCH_SHORTCUT,
   DEFAULT_SIDEBAR_SHORTCUT,
   DEFAULT_SKIP_TRANSITION_SHORTCUT,
   formatShortcut,
@@ -177,7 +178,7 @@ function GeneralTab(): React.ReactElement {
       <div>
         <SectionTitle
           title="Keyboard shortcuts"
-          desc="Click a field, then press the combo to rebind. The orbit launcher opens the solar-system view over the terminal; skip transition jumps any running animation to its end."
+          desc="Click a field, then press the combo to rebind. The orbit launcher opens the solar-system view over the terminal; search opens its fuzzy repo filter; skip transition jumps any running animation to its end."
         />
         <div className="mt-2 space-y-2">
           <ShortcutRow
@@ -191,6 +192,12 @@ function GeneralTab(): React.ReactElement {
             value={settings.orbitShortcut}
             resetValue={DEFAULT_ORBIT_SHORTCUT}
             onChange={(shortcut) => void updateSettings({ orbitShortcut: shortcut })}
+          />
+          <ShortcutRow
+            label="Search repositories"
+            value={settings.searchShortcut}
+            resetValue={DEFAULT_SEARCH_SHORTCUT}
+            onChange={(shortcut) => void updateSettings({ searchShortcut: shortcut })}
           />
           <ShortcutRow
             label="Skip transition"

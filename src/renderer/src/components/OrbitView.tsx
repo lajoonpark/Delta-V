@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Search, X } from 'lucide-react'
 import type { RepoTile } from '@shared/types'
 import { formatShortcut, shortcutMatches } from '@shared/types'
 import { useAppState } from '@renderer/state/AppProvider'
 import { LeaderTicks } from './ui'
 import { isMac } from '@renderer/hooks/useTheme'
+import { fuzzyRepoScore } from '@renderer/lib/fuzzy'
 import {
   orbitPoint,
   projectPoint,
@@ -13,7 +15,6 @@ import {
   type OrbitLayout
 } from '@renderer/art/orbitLayout'
 import { mountOrbitScene, type OrbitSceneHandle } from './orbitScene'
-import { registerDomPlanet } from './viewTransition'
 
 /**
  * Full-bleed solar-system launcher — a real 3D scene (see orbitScene.ts).
@@ -28,10 +29,14 @@ import { registerDomPlanet } from './viewTransition'
  *   terminal — Esc returns.
  * - Mouse: hover a planet or its label to select (highlight follows the
  *   cursor), click to launch — same model as the lander stage.
- * - Keyboard: type-to-filter, arrows to move, Enter to launch. Damped-zoom
- *   entrance is skippable (rebindable hotkey); reduced-motion cuts to the end.
- *   `instant` mounts at the end state when a cross-view transition owns the
- *   motion instead.
+ * - Keyboard: ⌘K (rebindable) opens the fuzzy search bar — planets drop away
+ *   as you type and the most likely repo auto-selects, so Enter launches it.
+ *   Typing anywhere opens the bar too; arrows move, Esc clears/backs out.
+ *   Damped-zoom entrance is skippable (rebindable hotkey); reduced-motion cuts
+ *   to the end. `instant` mounts at the end state when a cross-view transition
+ *   owns the motion instead. During an orbit ↔ stage camera dolly the scene
+ *   drives the motion (see orbitScene.cameraMove) and `chromeFade` dissolves
+ *   the callouts and HUD so only the planet and starfield are left in frame.
  */
 
 interface OrbitViewProps {
@@ -43,6 +48,10 @@ interface OrbitViewProps {
   instant?: boolean
   /** Planet to select on mount (the one that carried the eye in). */
   selectedTileId?: string | null
+  /** Live scene handle, so the window can drive the camera dolly + handoff. */
+  handleRef?: { current: OrbitSceneHandle | null }
+  /** Dissolve/reveal the DOM chrome while the scene's camera owns the move. */
+  chromeFade?: { mode: 'out' | 'in'; totalMs: number } | null
   onSelect(tile: RepoTile): void
   /** Esc in overlay mode → return to the terminal (carrying the selection). */
   onDismiss(selectedTileId: string | null): void
@@ -57,17 +66,24 @@ export function OrbitView({
   keyboardActive,
   instant,
   selectedTileId,
+  handleRef,
+  chromeFade,
   onSelect,
   onDismiss
 }: OrbitViewProps): React.ReactElement {
   const { settings } = useAppState()
   const rootRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const sceneRef = useRef<OrbitSceneHandle | null>(null)
   const [query, setQuery] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
   const [selected, setSelected] = useState(0)
   const [entered, setEntered] = useState(instant === true)
   const [skipped, setSkipped] = useState(false)
+
+  const searchShortcut = settings?.searchShortcut ?? 'mod+k'
+  const searchShortcutLabel = formatShortcut(searchShortcut, isMac)
 
   // ── Damped-zoom entrance (skippable; reduced-motion cuts to the end) ──
   const transitionMs = settings?.transitionDurationMs ?? 800
@@ -91,12 +107,16 @@ export function OrbitView({
   }, [])
 
   // ── Filter + selection ──
+  // Fuzzy-ranked: a typo or stray space still keeps the repo, and the best
+  // match sorts first so `selected = 0` is the one Enter should launch.
   const visible = useMemo(() => {
-    const q = query.trim().toLowerCase()
+    const q = query.trim()
     if (!q) return layout.bodies
-    return layout.bodies.filter(
-      (b) => b.tile.name.toLowerCase().includes(q) || b.tile.path.toLowerCase().includes(q)
-    )
+    return layout.bodies
+      .map((b) => ({ b, score: fuzzyRepoScore(q, b.tile.name, b.tile.path) }))
+      .filter((e): e is { b: (typeof layout.bodies)[number]; score: number } => e.score !== null)
+      .sort((x, y) => y.score - x.score)
+      .map((e) => e.b)
   }, [layout.bodies, query])
 
   useEffect(() => setSelected(0), [query])
@@ -119,15 +139,40 @@ export function OrbitView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible.length])
 
+  /** Close the search bar and drop its filter (Esc, ⌘K again, or a launch). */
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false)
+    setQuery('')
+  }, [])
+
+  /** Launch a repo, clearing the search so the system is whole when we return. */
+  const launch = useCallback(
+    (tile: RepoTile) => {
+      closeSearch()
+      onSelect(tile)
+    },
+    [closeSearch, onSelect]
+  )
+
   useEffect(() => {
     if (!keyboardActive) return
     const onKey = (e: KeyboardEvent): void => {
+      // ⌘K (rebindable): open the fuzzy repo search; again to close it.
+      if (shortcutMatches(e, searchShortcut, isMac)) {
+        e.preventDefault()
+        if (searchOpen) closeSearch()
+        else setSearchOpen(true)
+        return
+      }
       const skipHotkey = settings?.skipTransitionShortcut ?? 'mod+shift+s'
       if (shortcutMatches(e, skipHotkey, isMac)) {
         e.preventDefault()
         skipTransition()
         return
       }
+      // While the search input owns the caret it handles text entry itself
+      // (plus paste/selection); here we only drive navigation and dismissal.
+      const typingInSearch = document.activeElement === searchInputRef.current
       if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
         e.preventDefault()
         move(1)
@@ -138,28 +183,47 @@ export function OrbitView({
         const body = visible[sel]
         if (body) {
           e.preventDefault()
-          onSelect(body.tile)
+          launch(body.tile)
         }
       } else if (e.key === 'Escape') {
         e.preventDefault()
-        if (query) setQuery('')
+        if (searchOpen) closeSearch()
+        else if (query) setQuery('')
         else onDismiss(visible[sel]?.tile.id ?? null)
-      } else if (e.key === 'Backspace') {
+      } else if (!typingInSearch && e.key === 'Backspace') {
         e.preventDefault()
         setQuery((q) => q.slice(0, -1))
-      } else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      } else if (!typingInSearch && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        // Type-to-filter still works: the first key opens the bar and seeds it.
         e.preventDefault()
+        setSearchOpen(true)
         setQuery((q) => q + e.key)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [keyboardActive, settings?.skipTransitionShortcut, visible, sel, query, move, onSelect, onDismiss, skipTransition])
+  }, [
+    keyboardActive,
+    searchShortcut,
+    settings?.skipTransitionShortcut,
+    visible,
+    sel,
+    query,
+    searchOpen,
+    move,
+    launch,
+    closeSearch,
+    onDismiss,
+    skipTransition
+  ])
 
-  // Focus the view so typed keys don't fall through to the terminal behind it.
+  // Focus follows the search bar: the input while it's open, else the view, so
+  // typed keys never fall through to the terminal behind it.
   useEffect(() => {
-    if (keyboardActive) rootRef.current?.focus()
-  }, [keyboardActive])
+    if (!keyboardActive) return
+    if (searchOpen) searchInputRef.current?.focus()
+    else rootRef.current?.focus()
+  }, [keyboardActive, searchOpen])
 
   // ── 3D scene mount (disposed with the view) ──
   const measured = layout.width > 0 && layout.height > 0
@@ -174,10 +238,12 @@ export function OrbitView({
       reducedMotion: reduceMotion.current
     })
     sceneRef.current = handle
+    if (handleRef) handleRef.current = handle
     if (instant || reduceMotion.current) handle.skip()
     return () => {
       handle.dispose()
       sceneRef.current = null
+      if (handleRef) handleRef.current = null
     }
     // Mount once; later layout changes flow through update() below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -216,7 +282,6 @@ export function OrbitView({
   const setWrap = useCallback((id: string, el: HTMLButtonElement | null) => {
     if (el) wrapRefs.current.set(id, el)
     else wrapRefs.current.delete(id)
-    registerDomPlanet(`orbit:${id}`, el)
   }, [])
   const setLine = useCallback((id: string, el: SVGPolylineElement | null) => {
     if (el) lineRefs.current.set(id, el)
@@ -329,6 +394,19 @@ export function OrbitView({
     }
   }
 
+  // Callouts + HUD dissolve while the scene's camera dives (or reveal as it
+  // rises) — the move itself is driven inside orbitScene.
+  const chromeStyle = ((): React.CSSProperties => {
+    if (!chromeFade) return {}
+    return chromeFade.mode === 'out'
+      ? { animation: `chrome-out ${Math.round(chromeFade.totalMs * 0.35)}ms ease both` }
+      : {
+          animation: `chrome-in ${Math.round(chromeFade.totalMs * 0.65)}ms ease ${Math.round(
+            chromeFade.totalMs * 0.35
+          )}ms both`
+        }
+  })()
+
   const orbitShortcut = formatShortcut(settings?.orbitShortcut ?? 'mod+o', isMac)
 
   return (
@@ -343,6 +421,7 @@ export function OrbitView({
         <canvas ref={canvasRef} aria-hidden className="absolute inset-0 h-full w-full" />
 
         {/* Leader-line callouts + selection ring */}
+        <div className="pointer-events-none absolute inset-0" style={{ zIndex: 2000, ...chromeStyle }}>
         <svg className="pointer-events-none absolute inset-0 h-full w-full" style={{ overflow: 'visible' }}>
           {visible.map((b, i) => {
             if (!b.hasPlate) return null
@@ -381,28 +460,6 @@ export function OrbitView({
           )}
         </svg>
 
-        {/* Planet hit targets — hover selects, click launches */}
-        {visible.map((b, i) => {
-          return (
-            <button
-              key={b.tile.id}
-              type="button"
-              aria-label={`Launch ${b.tile.name}`}
-              ref={(el) => setWrap(b.tile.id, el)}
-              onMouseEnter={() => setSelected(i)}
-              onClick={() => onSelect(b.tile)}
-              className="absolute rounded-full outline-none"
-              style={{
-                left: b.cx - b.r,
-                top: b.cy - b.r,
-                width: Math.max(MIN_HIT, b.r * 2),
-                height: Math.max(MIN_HIT, b.r * 2),
-                zIndex: 100 + Math.round(b.cy)
-              }}
-            />
-          )
-        })}
-
         {/* Callout labels — hover selects, click launches. Dark plates keep them
             readable when a drifting planet passes beneath (reference look).
             The full-bleed wrapper carries the entrance fade; the plate itself
@@ -414,7 +471,7 @@ export function OrbitView({
                 type="button"
                 aria-label={`Launch ${b.tile.name}`}
                 ref={(el) => setLabel(b.tile.id, el)}
-                onClick={() => onSelect(b.tile)}
+                onClick={() => launch(b.tile)}
                 onMouseEnter={() => setSelected(i)}
                 className="pointer-events-auto absolute select-none rounded-sm border px-2.5 py-1 text-left outline-none"
                 style={{
@@ -471,7 +528,79 @@ export function OrbitView({
             </div>
           </div>
 
-          {/* Filter readout (type-to-filter) */}
+          {/* Search palette (⌘K) — planets drop away as you type and the most
+              likely repo auto-selects, so Enter launches it. Outer div owns the
+              centering (z-above the callout plates); inner owns the pop-in. */}
+          {searchOpen && (
+            <div
+              className="pointer-events-auto absolute left-1/2 top-4 w-[min(560px,78vw)] -translate-x-1/2"
+              style={{ zIndex: 3000 }}
+            >
+              <div className="animate-pop-in">
+                <div
+                  className="flex items-center gap-2.5 rounded-lg border px-3 py-2"
+                  style={{
+                    background: 'rgba(18,22,30,0.9)',
+                    borderColor: 'rgba(255,138,61,0.55)',
+                    boxShadow: '0 14px 44px rgba(0,0,0,0.5)',
+                    backdropFilter: 'blur(6px)'
+                  }}
+                >
+                  <Search size={15} style={{ color: 'var(--ember)' }} />
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search repos…"
+                    aria-label="Search repositories"
+                    spellCheck={false}
+                    autoComplete="off"
+                    autoCorrect="off"
+                    className="min-w-0 flex-1 selectable bg-transparent font-hud text-[13px] tracking-[0.06em] outline-none placeholder:text-muted"
+                    style={{ color: 'var(--paper)' }}
+                  />
+                  {query && (
+                    <>
+                      <span
+                        className="shrink-0 font-hud text-[10px] tracking-[0.18em] uppercase"
+                        style={{ color: 'var(--muted)' }}
+                      >
+                        {visible.length}/{layout.bodies.length}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label="Clear search"
+                        onClick={() => setQuery('')}
+                        className="shrink-0 rounded p-0.5 outline-none"
+                        style={{ color: 'var(--muted)' }}
+                      >
+                        <X size={13} />
+                      </button>
+                    </>
+                  )}
+                </div>
+                <div className="mt-1.5 flex items-center justify-between px-1">
+                  <span
+                    className="truncate font-hud text-[10px] tracking-[0.16em] uppercase"
+                    style={{ color: visible.length ? 'var(--muted)' : 'var(--ember)' }}
+                  >
+                    {visible.length
+                      ? `↵ Launch · ${visible[sel]?.tile.name ?? ''}`
+                      : 'No matching repos'}
+                  </span>
+                  <span
+                    className="shrink-0 pl-3 font-hud text-[10px] tracking-[0.16em] uppercase"
+                    style={{ color: 'var(--muted)' }}
+                  >
+                    ESC CLOSE
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Status readout */}
           <div className="absolute bottom-5 left-6 flex items-center gap-3">
             <div
               className="rounded-sm border px-2.5 py-1 font-hud text-[10px] tracking-[0.18em] uppercase"
@@ -481,7 +610,7 @@ export function OrbitView({
                 background: 'rgba(18,22,30,0.6)'
               }}
             >
-              {query ? `FILTER ${query}` : 'TYPE TO FILTER'}
+              {query ? `FILTER ${query}` : `${searchShortcutLabel} SEARCH`}
             </div>
             <div
               className="font-hud text-[10px] tracking-[0.18em] uppercase"
@@ -499,6 +628,30 @@ export function OrbitView({
             {' · '}ESC {keyboardActive ? 'BACK' : ''}
           </div>
         </div>
+        </div>
+
+        {/* Planet hit targets — hover selects, click launches */}
+        {visible.map((b, i) => {
+          return (
+            <button
+              key={b.tile.id}
+              type="button"
+              aria-label={`Launch ${b.tile.name}`}
+              ref={(el) => setWrap(b.tile.id, el)}
+              onMouseEnter={() => setSelected(i)}
+              onClick={() => launch(b.tile)}
+              className="absolute rounded-full outline-none"
+              style={{
+                left: b.cx - b.r,
+                top: b.cy - b.r,
+                width: Math.max(MIN_HIT, b.r * 2),
+                height: Math.max(MIN_HIT, b.r * 2),
+                zIndex: 100 + Math.round(b.cy)
+              }}
+            />
+          )
+        })}
+
       </div>
     </div>
   )
