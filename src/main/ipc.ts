@@ -3,11 +3,13 @@ import { IPC } from '@shared/ipc'
 import type {
   AgentDefinition,
   NewAgentPayload,
+  RemoteConfigurePayload,
   RepoSearchRequest,
   SpawnRequest
 } from '@shared/types'
 import { agentService } from './agents'
 import { ptyManager } from './pty'
+import { remoteBridge } from './remoteBridge'
 import { repoIndexService } from './repoIndex'
 import { scannerService } from './scanner'
 import { settingsService } from './settings'
@@ -31,6 +33,7 @@ export function registerIpcHandlers(): void {
   scannerService.setBroadcast((ch, payload) => windowManager.broadcast(ch, payload))
   ptyManager.setBroadcast((ch, payload) => windowManager.broadcast(ch, payload))
   repoIndexService.setBroadcast((ch, payload) => windowManager.broadcast(ch, payload))
+  remoteBridge.setBroadcast((ch, payload) => windowManager.broadcast(ch, payload))
 
   // ── settings ──────────────────────────────────────────────────────────
   ipcMain.handle(IPC.settingsGet, () => wrap(() => settingsService.getRedacted()))
@@ -45,8 +48,9 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC.settingsReset, () =>
-    wrap(() => {
+    wrap(async () => {
       settingsService.reset()
+      await remoteBridge.apply()
       return settingsService.getRedacted()
     })
   )
@@ -213,6 +217,37 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.terminalKill, (_e, sessionId: string) =>
     wrap(() => ptyManager.kill(sessionId))
+  )
+
+  // ── remote ────────────────────────────────────────────────────────────
+  ipcMain.handle(IPC.remoteStatus, () => wrap(() => remoteBridge.getStatus()))
+
+  ipcMain.handle(IPC.remoteConfigure, (_e, payload: RemoteConfigurePayload) =>
+    wrap(async () => {
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        throw new Error('invalid payload')
+      }
+      if ('enabled' in payload && typeof payload.enabled !== 'boolean') {
+        throw new Error('enabled must be a boolean')
+      }
+      if ('port' in payload && typeof payload.port !== 'number') {
+        throw new Error('port must be a number')
+      }
+      const partial: { remoteEnabled?: boolean; remotePort?: number } = {}
+      if (typeof payload.enabled === 'boolean') partial.remoteEnabled = payload.enabled
+      if (typeof payload.port === 'number') partial.remotePort = payload.port
+      const result = settingsService.updateRemote(partial)
+      if (!result.ok) throw new Error(result.error)
+      await remoteBridge.apply()
+      return remoteBridge.getStatus()
+    })
+  )
+
+  ipcMain.handle(IPC.remoteRegenerateToken, () =>
+    wrap(async () => {
+      await remoteBridge.regenerateToken()
+      return remoteBridge.getStatus()
+    })
   )
 
   // ── windows ───────────────────────────────────────────────────────────

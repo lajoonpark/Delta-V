@@ -2,6 +2,7 @@ import { app, BrowserWindow } from 'electron'
 import { agentService } from './agents'
 import { registerIpcHandlers } from './ipc'
 import { ptyManager } from './pty'
+import { remoteBridge } from './remoteBridge'
 import { scannerService } from './scanner'
 import { settingsService } from './settings'
 import { windowManager } from './windows'
@@ -31,6 +32,8 @@ if (!gotLock) {
     settingsService.initSecrets()
 
     registerIpcHandlers()
+    remoteBridge.attach()
+    void remoteBridge.apply()
 
     // Warm caches: settings, roots, agents
     settingsService.get()
@@ -61,8 +64,10 @@ if (!gotLock) {
     if (quitting) return
     quitting = true
     e.preventDefault()
-    void ptyManager
-      .killAll()
+    void remoteBridge
+      .stop()
+      .catch(() => undefined)
+      .then(() => ptyManager.killAll())
       .catch(() => undefined)
       .finally(() => app.quit())
   })

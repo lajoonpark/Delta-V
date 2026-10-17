@@ -32,6 +32,9 @@ jobs:
 
       - run: npm run typecheck
 
+      - name: Remote checks
+        run: npm run test:remote
+
       # Code signing + notarization (opt-in — re-add all five env vars below
       # once the repo secrets exist; an empty CSC_LINK breaks the build):
       #   APPLE_CERTIFICATE_BASE64 / APPLE_CERTIFICATE_PASSWORD

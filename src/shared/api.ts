@@ -2,6 +2,8 @@ import type {
   AgentDefinition,
   AppSettings,
   NewAgentPayload,
+  RemoteConfigurePayload,
+  RemoteStatus,
   RepoIndexCompleteEvent,
   RepoIndexProgress,
   RepoIndexStatus,
@@ -96,6 +98,14 @@ export interface DeltaVApi {
   closeWindow(windowId: string): Promise<void>
   toggleSidebar(): void
 
+  // ── remote ────────────────────────────────────────────────────────
+  /** Current Remote bridge state (never includes the raw pairing token). */
+  getRemoteStatus(): Promise<RemoteStatus>
+  /** Enable/disable the mirror and/or change its port. Returns the new status. */
+  configureRemote(payload: RemoteConfigurePayload): Promise<RemoteStatus>
+  /** Mint a new pairing token (invalidates existing pairings). Returns the new status. */
+  regenerateRemoteToken(): Promise<RemoteStatus>
+
   // ── main → renderer events ────────────────────────────────────────────
   /** Streaming PTY output. Write to xterm via term.write(data). */
   onTerminalData(cb: (e: { sessionId: string; data: string }) => void): () => void
@@ -115,4 +125,6 @@ export interface DeltaVApi {
   onIndexProgress(cb: (e: RepoIndexProgress) => void): () => void
   /** Background indexing finished for a repo (success or failure). */
   onIndexComplete(cb: (e: RepoIndexCompleteEvent) => void): () => void
+  /** Remote bridge state changed (start/stop/port/token/clients). */
+  onRemoteStatus(cb: (e: RemoteStatus) => void): () => void
 }

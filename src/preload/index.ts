@@ -29,7 +29,8 @@ const EVENT_CHANNELS = new Set<string>([
   IPC.folderScanComplete,
   IPC.gridInvalidate,
   IPC.indexProgress,
-  IPC.indexComplete
+  IPC.indexComplete,
+  IPC.remoteStatusChanged
 ])
 
 function on(channel: string, cb: (payload: unknown) => void): () => void {
@@ -107,6 +108,11 @@ const api: DeltaVApi = {
   closeWindow: (windowId) => unwrap(ipcRenderer.invoke(IPC.windowClose, windowId)),
   toggleSidebar: () => ipcRenderer.send(IPC.windowToggleSidebar),
 
+  // ── remote ────────────────────────────────────────────────────
+  getRemoteStatus: () => unwrap(ipcRenderer.invoke(IPC.remoteStatus)),
+  configureRemote: (payload) => unwrap(ipcRenderer.invoke(IPC.remoteConfigure, payload)),
+  regenerateRemoteToken: () => unwrap(ipcRenderer.invoke(IPC.remoteRegenerateToken)),
+
   // ── main → renderer events ────────────────────────────────────────────
   onTerminalData: (cb) =>
     on(IPC.terminalData, (p) =>
@@ -119,7 +125,8 @@ const api: DeltaVApi = {
   onScanComplete: (cb) => on(IPC.folderScanComplete, (p) => cb(p as never)),
   onGridInvalidate: (cb) => on(IPC.gridInvalidate, () => cb()),
   onIndexProgress: (cb) => on(IPC.indexProgress, (p) => cb(p as never)),
-  onIndexComplete: (cb) => on(IPC.indexComplete, (p) => cb(p as never))
+  onIndexComplete: (cb) => on(IPC.indexComplete, (p) => cb(p as never)),
+  onRemoteStatus: (cb) => on(IPC.remoteStatusChanged, (p) => cb(p as never))
 }
 
 contextBridge.exposeInMainWorld('deltav', api)

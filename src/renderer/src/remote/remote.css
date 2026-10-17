@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-void font-sans text-paper antialiased;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+button {
+  touch-action: manipulation;
+}
+
+input,
+textarea {
+  user-select: text;
+}
+
+/* Hidden helper textarea must never receive touches/pointer events on iOS. */
+.xterm .xterm-helper-textarea {
+  pointer-events: none;
+}
+
+.xterm .xterm-viewport {
+  background-color: transparent !important;
+}
+
+/* Thin, unobtrusive scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(139 148 163 / 0.35) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgb(139 148 163 / 0.35);
+  border-radius: 9999px;
+}

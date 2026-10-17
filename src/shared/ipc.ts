@@ -42,12 +42,16 @@ export const IPC = {
   terminalKill: 'terminal:kill',
   terminalList: 'terminal:list',
   terminalInput: 'terminal:input',
-  terminalRefresh: 'terminal:refresh',
 
   // window
   windowCreate: 'window:create',
   windowClose: 'window:close',
   windowToggleSidebar: 'window:toggleSidebar',
+
+  // remote
+  remoteStatus: 'remote:status',
+  remoteConfigure: 'remote:configure',
+  remoteRegenerateToken: 'remote:regenerateToken',
 
   // main → renderer events
   terminalData: 'terminal:data',
@@ -58,7 +62,17 @@ export const IPC = {
   folderScanComplete: 'folder:scanComplete',
   gridInvalidate: 'grid:invalidate',
   indexProgress: 'index:progress',
-  indexComplete: 'index:complete'
+  indexComplete: 'index:complete',
+  remoteStatusChanged: 'remote:statusChanged'
 } as const
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC]
+
+export const REMOTE_WS_PATH = '/ws'
+/** WebSocket subprotocol; the token travels as a second subprotocol `auth.<token>` (headers can't be set from browser WebSockets, and the URL must never carry the token). */
+export const REMOTE_WS_SUBPROTOCOL = 'deltav.v1'
+export const REMOTE_WS_TOKEN_PREFIX = 'auth.'
+export const REMOTE_SESSIONS_PATH = '/api/sessions'
+export function remoteBufferPath(sessionId: string): string {
+  return `${REMOTE_SESSIONS_PATH}/${encodeURIComponent(sessionId)}/buffer`
+}

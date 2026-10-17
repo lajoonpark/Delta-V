@@ -28,7 +28,10 @@ export default defineConfig({
     resolve: { alias: { ...sharedAlias, '@renderer': resolve(__dirname, 'src/renderer/src') } },
     build: {
       rollupOptions: {
-        input: resolve(__dirname, 'src/renderer/index.html')
+        input: {
+          index: resolve(__dirname, 'src/renderer/index.html'),
+          remote: resolve(__dirname, 'src/renderer/remote.html')
+        }
       }
     },
     plugins: [react()]

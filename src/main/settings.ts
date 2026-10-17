@@ -1,9 +1,11 @@
+import { randomUUID } from 'crypto'
 import Store from 'electron-store'
 import {
   AppSettings,
   BUILTIN_AGENTS,
   CustomAgent,
   DEFAULT_ORBIT_SHORTCUT,
+  DEFAULT_REMOTE_PORT,
   DEFAULT_SEARCH_SHORTCUT,
   DEFAULT_SETTINGS,
   DEFAULT_SIDEBAR_SHORTCUT,
@@ -11,6 +13,8 @@ import {
   DEFAULT_TRANSITION_MS,
   isSecretKey,
   normalizeShortcut,
+  REMOTE_PORT_MAX,
+  REMOTE_PORT_MIN,
   Result,
   SECRET_MASK
 } from '@shared/types'
@@ -24,7 +28,7 @@ import { secretsService } from './secrets'
  * and extend `migrations` so existing users upgrade transparently.
  */
 
-const SCHEMA_VERSION = 7
+const SCHEMA_VERSION = 8
 
 type StoredSettings = AppSettings & { __schemaVersion: number }
 
@@ -72,6 +76,15 @@ const migrations: Record<number, (prev: Record<string, unknown>) => StoredSettin
   6: (prev) => {
     const next = { ...DEFAULT_SETTINGS, ...(prev as object) } as StoredSettings
     next.searchShortcut = DEFAULT_SEARCH_SHORTCUT
+    next.__schemaVersion = SCHEMA_VERSION
+    return next
+  },
+  // v7 → v8: added remoteEnabled + remotePort + remoteToken (Delta-V Remote)
+  7: (prev) => {
+    const next = { ...DEFAULT_SETTINGS, ...(prev as object) } as StoredSettings
+    next.remoteEnabled = false
+    next.remotePort = DEFAULT_REMOTE_PORT
+    next.remoteToken = ''
     next.__schemaVersion = SCHEMA_VERSION
     return next
   }
@@ -138,6 +151,17 @@ function validate(settings: AppSettings): string[] {
     settings.transitionDurationMs > 2000
   )
     errors.push('transitionDurationMs must be a number between 0 and 2000')
+  if (typeof settings.remoteEnabled !== 'boolean')
+    errors.push('remoteEnabled must be a boolean')
+  if (
+    typeof settings.remotePort !== 'number' ||
+    !Number.isInteger(settings.remotePort) ||
+    settings.remotePort < REMOTE_PORT_MIN ||
+    settings.remotePort > REMOTE_PORT_MAX
+  )
+    errors.push(`remotePort must be an integer between ${REMOTE_PORT_MIN} and ${REMOTE_PORT_MAX}`)
+  if (typeof settings.remoteToken !== 'string')
+    errors.push('remoteToken must be a string')
   return errors
 }
 
@@ -208,6 +232,17 @@ class SettingsService {
       this.cache.transitionDurationMs,
       DEFAULT_TRANSITION_MS
     )
+    this.cache.remoteEnabled =
+      typeof this.cache.remoteEnabled === 'boolean' ? this.cache.remoteEnabled : false
+    this.cache.remotePort =
+      typeof this.cache.remotePort === 'number' &&
+      Number.isInteger(this.cache.remotePort) &&
+      this.cache.remotePort >= REMOTE_PORT_MIN &&
+      this.cache.remotePort <= REMOTE_PORT_MAX
+        ? this.cache.remotePort
+        : DEFAULT_REMOTE_PORT
+    this.cache.remoteToken =
+      typeof this.cache.remoteToken === 'string' ? this.cache.remoteToken : ''
     this.persist()
   }
 
@@ -300,6 +335,7 @@ class SettingsService {
     return {
       ...settings,
       secretStorageEncrypted: secretsService.isEncryptionAvailable(),
+      remoteToken: '',
       customAgents: settings.customAgents.map((a) => ({
         ...a,
         env: maskEnv(a.id, secretsService.isInit() ? a.env : stripSecretKeys(a.env))
@@ -361,6 +397,61 @@ class SettingsService {
     this.persist()
     const { __schemaVersion: _, ...result } = this.cache
     return { ok: true, data: result }
+  }
+
+  /**
+   * Update the Remote bridge settings (enabled/port only). The pairing token is
+   * a main-process secret and is never set here — see ensureRemoteToken.
+   */
+  updateRemote(partial: { remoteEnabled?: boolean; remotePort?: number }): Result<AppSettings> {
+    const next: StoredSettings = { ...this.cache }
+    if ('remoteEnabled' in partial) {
+      if (typeof partial.remoteEnabled !== 'boolean') {
+        return { ok: false, error: 'remoteEnabled must be a boolean' }
+      }
+      next.remoteEnabled = partial.remoteEnabled
+    }
+    if ('remotePort' in partial) {
+      const port = partial.remotePort
+      if (
+        typeof port !== 'number' ||
+        !Number.isInteger(port) ||
+        port < REMOTE_PORT_MIN ||
+        port > REMOTE_PORT_MAX
+      ) {
+        return {
+          ok: false,
+          error: `Port must be an integer between ${REMOTE_PORT_MIN} and ${REMOTE_PORT_MAX}`
+        }
+      }
+      next.remotePort = port
+    }
+    const errors = validate(next)
+    if (errors.length > 0) {
+      return { ok: false, error: errors.join('; ') }
+    }
+    this.cache = next
+    this.persist()
+    const { __schemaVersion: _, ...result } = this.cache
+    return { ok: true, data: result }
+  }
+
+  /**
+   * Return the pairing token, generating and persisting a fresh UUID when none
+   * is stored yet (e.g. after a reset).
+   */
+  ensureRemoteToken(): string {
+    if (this.cache.remoteToken) return this.cache.remoteToken
+    this.cache.remoteToken = randomUUID()
+    this.persist()
+    return this.cache.remoteToken
+  }
+
+  /** Always mint a new pairing token and persist it (invalidates old pairings). */
+  regenerateRemoteToken(): string {
+    this.cache.remoteToken = randomUUID()
+    this.persist()
+    return this.cache.remoteToken
   }
 
   reset(): AppSettings {

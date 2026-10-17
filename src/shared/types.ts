@@ -71,6 +71,12 @@ export interface AppSettings {
    * also cuts to end states regardless of this value.
    */
   transitionDurationMs: number
+  /** Delta-V Remote: read-only LAN mirror of terminal sessions for phones. Off by default. Changed only via `remote:configure`. */
+  remoteEnabled: boolean
+  /** TCP port the Remote bridge listens on (1024–65535). Changed only via `remote:configure`. */
+  remotePort: number
+  /** Pairing token (UUID). Main-process secret: ALWAYS '' when sent to the renderer. */
+  remoteToken: string
   /**
    * Main-process-populated status (never persisted, ignored on update): true
    * when the OS provides an encryption backend for the secrets store. The
@@ -96,7 +102,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   orbitShortcut: 'mod+o',
   searchShortcut: 'mod+k',
   skipTransitionShortcut: 'mod+shift+s',
-  transitionDurationMs: 800
+  transitionDurationMs: 800,
+  remoteEnabled: false,
+  remotePort: 4137,
+  remoteToken: ''
 }
 
 /** Default sidebar toggle: ⌘B on macOS, Ctrl+B elsewhere (`mod` = primary). */
@@ -488,6 +497,96 @@ export interface RepoSearchResponse {
   /** Present when the search fell back to plain substring matching. */
   fallback?: boolean
   error?: string
+}
+
+// ── Delta-V Remote (read-only LAN mirror) ───────────────────────
+
+export const DEFAULT_REMOTE_PORT = 4137
+export const REMOTE_PORT_MIN = 1024
+export const REMOTE_PORT_MAX = 65535
+
+/** Exit state kept for a few minutes after a session ends so viewers can show "exited (code)". */
+export interface RemoteExitInfo {
+  exitCode: number
+  signal?: string
+  /** Epoch ms when the exit was observed by the bridge. */
+  at: number
+}
+
+/** TerminalSessionInfo as served to remote clients (superset; the base type is reused verbatim). */
+export interface RemoteSessionInfo extends TerminalSessionInfo {
+  /** Display name of the agent (e.g. "Kilo CLI"); set by the bridge. */
+  agentName?: string
+  /** Effective tab-label prefix of the agent (e.g. "K"); set by the bridge. */
+  tabLabel?: string
+  /** Present once the session has exited (until it is purged from the bridge). */
+  exit?: RemoteExitInfo
+}
+
+/** `terminal:data` as delivered over the remote WS. `offset` = number of UTF-16 code units of output emitted for this session BEFORE this chunk. */
+export interface RemoteDataEvent {
+  sessionId: string
+  data: string
+  offset: number
+}
+
+/** Body of GET /api/sessions/:id/buffer. */
+export interface RemoteBufferSnapshot {
+  sessionId: string
+  /** Raw PTY output (ANSI included) to replay into a freshly reset terminal. */
+  data: string
+  /** Output offset just past the last char of the ring contents. Live data events with `offset + data.length <= end` are already included in `data`. */
+  end: number
+  /** True when older output fell out of the ring buffer (data then starts with a mode-restoring prefix). */
+  truncated: boolean
+  cols: number
+  rows: number
+  exit?: RemoteExitInfo
+}
+
+export interface RemoteGoneEvent {
+  sessionId: string
+}
+
+/** Messages pushed server → client over the remote WS (`channel` strings match src/shared/ipc.ts). */
+export type RemoteWsMessage =
+  | { channel: 'terminal:data'; payload: RemoteDataEvent }
+  | { channel: 'terminal:exit'; payload: TerminalExitEvent }
+  | { channel: 'terminal:title'; payload: TerminalTitleEvent }
+  | { channel: 'terminal:status'; payload: TerminalStatusEvent }
+  | { channel: 'remote:session'; payload: RemoteSessionInfo }
+  | { channel: 'remote:gone'; payload: RemoteGoneEvent }
+  | { channel: 'remote:heartbeat'; payload: { t: number } }
+  | { channel: 'remote:pong'; payload: { t: number } }
+
+/** One reachable LAN URL for pairing. */
+export interface RemoteAddress {
+  /** Network interface name, e.g. "en0". */
+  iface: string
+  address: string
+  /** http://<address>:<port>/#<token> */
+  url: string
+  /** QR code of `url` as an inline SVG string (dark modules #000 on #fff). */
+  qrSvg: string
+}
+
+/** Remote bridge state for the Settings UI. Never contains the raw token (only inside `addresses[].url`). */
+export interface RemoteStatus {
+  enabled: boolean
+  /** True when the HTTP+WS server is actually listening. */
+  running: boolean
+  port: number
+  /** Non-internal IPv4 addresses (best candidate first). Empty when not running or no LAN found. */
+  addresses: RemoteAddress[]
+  /** Connected WebSocket viewers. */
+  clients: number
+  /** Last start failure, e.g. "Port 4137 is already in use". */
+  error?: string
+}
+
+export interface RemoteConfigurePayload {
+  enabled?: boolean
+  port?: number
 }
 
 // ── Generic payloads ────────────────────────────────────────────────────────

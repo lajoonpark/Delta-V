@@ -1,25 +1,39 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  Check,
+  Copy,
   Database,
   Folder,
   GripVertical,
+  KeyRound,
   LayoutGrid,
   Loader2,
   Pencil,
   Plus,
+  RefreshCw,
   RotateCcw,
   Sliders,
+  Smartphone,
   SquareTerminal,
   Trash2,
   UserPlus,
+  Wifi,
   X
 } from 'lucide-react'
-import type { AgentDefinition, NewAgentPayload } from '@shared/types'
+import type {
+  AgentDefinition,
+  NewAgentPayload,
+  RemoteConfigurePayload,
+  RemoteStatus
+} from '@shared/types'
 import {
   DEFAULT_ORBIT_SHORTCUT,
+  DEFAULT_REMOTE_PORT,
   DEFAULT_SEARCH_SHORTCUT,
   DEFAULT_SIDEBAR_SHORTCUT,
   DEFAULT_SKIP_TRANSITION_SHORTCUT,
+  REMOTE_PORT_MAX,
+  REMOTE_PORT_MIN,
   formatShortcut,
   normalizeShortcut,
   shortcutFromEvent
@@ -39,11 +53,11 @@ import {
 } from './ui'
 
 /**
- * Settings window content: General | Agents | Appearance | Advanced.
+ * Settings window content: General | Agents | Appearance | Remote | Advanced.
  * Every change is persisted immediately through the backend.
  */
 
-type Tab = 'general' | 'agents' | 'appearance' | 'advanced'
+type Tab = 'general' | 'agents' | 'appearance' | 'remote' | 'advanced'
 
 export function SettingsDialog({
   initialTab,
@@ -58,6 +72,7 @@ export function SettingsDialog({
     { id: 'general', label: 'General', icon: <LayoutGrid size={14} /> },
     { id: 'agents', label: 'Agents', icon: <SquareTerminal size={14} /> },
     { id: 'appearance', label: 'Appearance', icon: <Sliders size={14} /> },
+    { id: 'remote', label: 'Remote', icon: <Smartphone size={14} /> },
     { id: 'advanced', label: 'Advanced', icon: <Database size={14} /> }
   ]
 
@@ -87,6 +102,7 @@ export function SettingsDialog({
           {tab === 'general' && <GeneralTab />}
           {tab === 'agents' && <AgentsTab />}
           {tab === 'appearance' && <AppearanceTab />}
+          {tab === 'remote' && <RemoteTab />}
           {tab === 'advanced' && <AdvancedTab onDone={onClose} />}
         </div>
       </div>
@@ -744,6 +760,280 @@ function AppearanceTab(): React.ReactElement {
           0 or very low (≤ 250ms) skips it and cuts straight to the terminal.
         </p>
       </div>
+    </section>
+  )
+}
+
+// ── Remote ─────────────────────────────────────────────────────────────────
+
+function RemoteTab(): React.ReactElement {
+  const [status, setStatus] = useState<RemoteStatus | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [portDraft, setPortDraft] = useState('')
+  const [portError, setPortError] = useState<string | null>(null)
+  const [addrIndex, setAddrIndex] = useState(0)
+  const [copied, setCopied] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const [regenerating, setRegenerating] = useState(false)
+  const copyTimer = useRef<number | null>(null)
+
+  useEffect(() => {
+    let active = true
+    window.deltav
+      .getRemoteStatus()
+      .then((next) => {
+        if (active) setStatus(next)
+      })
+      .catch((err) => {
+        if (active) setLoadError(err instanceof Error ? err.message : String(err))
+      })
+    const off = window.deltav.onRemoteStatus(setStatus)
+    return () => {
+      active = false
+      off()
+      if (copyTimer.current) window.clearTimeout(copyTimer.current)
+    }
+  }, [])
+
+  // Keep the port draft in sync with the configured port.
+  useEffect(() => {
+    if (status) setPortDraft(String(status.port))
+  }, [status?.port])
+
+  // Clamp the selected LAN address when the list changes.
+  useEffect(() => {
+    if (status) setAddrIndex((i) => (i >= status.addresses.length ? 0 : i))
+  }, [status?.addresses.length])
+
+  if (!status) {
+    return loadError ? <p className="text-xs text-red-500">{loadError}</p> : <Loading />
+  }
+
+  const configure = (payload: RemoteConfigurePayload): void => {
+    setBusy(true)
+    setError(null)
+    window.deltav
+      .configureRemote(payload)
+      .then(setStatus)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusy(false))
+  }
+
+  const commitPort = (revert: boolean): void => {
+    const next = portDraft.trim()
+    const value = Number(next)
+    if (!/^\d+$/.test(next) || value < REMOTE_PORT_MIN || value > REMOTE_PORT_MAX) {
+      setPortError(`Port must be between ${REMOTE_PORT_MIN} and ${REMOTE_PORT_MAX}`)
+      if (revert) setPortDraft(String(status.port))
+      return
+    }
+    setPortError(null)
+    if (value !== status.port) configure({ port: value })
+  }
+
+  const refresh = (): void => {
+    setRefreshing(true)
+    window.deltav
+      .getRemoteStatus()
+      .then(setStatus)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setRefreshing(false))
+  }
+
+  const copyLink = (url: string): void => {
+    void navigator.clipboard.writeText(url).then(() => {
+      setCopied(true)
+      if (copyTimer.current) window.clearTimeout(copyTimer.current)
+      copyTimer.current = window.setTimeout(() => setCopied(false), 1500)
+    })
+  }
+
+  const regenerate = (): void => {
+    setRegenerating(true)
+    window.deltav
+      .regenerateRemoteToken()
+      .then(setStatus)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => {
+        setRegenerating(false)
+        setConfirming(false)
+      })
+  }
+
+  const current =
+    status.addresses.length > 0
+      ? status.addresses[Math.min(addrIndex, status.addresses.length - 1)]
+      : undefined
+
+  return (
+    <section className="space-y-6">
+      <SectionTitle
+        title="Delta-V Remote"
+        desc="Watch your agent sessions from your phone on the same Wi-Fi. It is a read-only mirror — it can't type into, start or stop anything. LAN only: no cloud, no accounts."
+      />
+
+      <div className="flex items-start justify-between gap-4 rounded-xl border border-zinc-200 p-3.5 dark:border-zinc-800">
+        <div>
+          <p className="text-[13px] font-medium text-zinc-800 dark:text-zinc-100">
+            Enable Remote
+          </p>
+          <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-400">
+            Serve a read-only mirror of your terminal sessions to devices on the local network.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {busy && <Loader2 size={13} className="animate-spin text-accent" />}
+          <Toggle
+            checked={status.enabled}
+            disabled={busy}
+            label="Enable Remote"
+            onChange={(enabled) => configure({ enabled })}
+          />
+        </div>
+      </div>
+
+      {error && <p className="text-xs text-red-500">{error}</p>}
+
+      <Field label="Port" hint={`Between ${REMOTE_PORT_MIN} and ${REMOTE_PORT_MAX}.`}>
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            min={REMOTE_PORT_MIN}
+            max={REMOTE_PORT_MAX}
+            value={portDraft}
+            disabled={busy}
+            onChange={(e) => setPortDraft(e.target.value)}
+            onBlur={() => commitPort(true)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                commitPort(false)
+              }
+            }}
+            className={`${inputClass} w-32`}
+          />
+          {status.port !== DEFAULT_REMOTE_PORT && (
+            <Button
+              disabled={busy}
+              onClick={() => {
+                setPortDraft(String(DEFAULT_REMOTE_PORT))
+                setPortError(null)
+                configure({ port: DEFAULT_REMOTE_PORT })
+              }}
+            >
+              Reset
+            </Button>
+          )}
+        </div>
+        {portError && <p className="mt-1 text-[11px] text-red-500">{portError}</p>}
+      </Field>
+
+      <div className="flex items-center justify-between gap-2">
+        {!status.enabled ? (
+          <p className="text-[11px] text-zinc-400">Off</p>
+        ) : status.running ? (
+          <p className="flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-green-500" />
+            Listening on port {status.port} · {status.clients} device
+            {status.clients === 1 ? '' : 's'} connected
+          </p>
+        ) : (
+          <p className="text-[11px] text-red-500">{status.error ?? 'Not running'}</p>
+        )}
+        {status.running && (
+          <IconButton
+            label="Refresh network addresses"
+            disabled={refreshing}
+            onClick={() => refresh()}
+          >
+            <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
+          </IconButton>
+        )}
+      </div>
+
+      {status.running && current && (
+        <div className="flex items-start gap-4 rounded-xl border border-zinc-200 p-3.5 dark:border-zinc-800">
+          <div
+            className="h-44 w-44 shrink-0 rounded-xl bg-white p-2 [&>svg]:h-full [&>svg]:w-full"
+            dangerouslySetInnerHTML={{ __html: current.qrSvg }}
+          />
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] font-medium text-zinc-800 dark:text-zinc-100">
+              Scan with your phone’s camera
+            </p>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-400">
+              Open the link it shows in Safari / Chrome. You only pair once.
+            </p>
+            <div className="mt-2 flex items-center gap-2">
+              <code className="selectable min-w-0 flex-1 break-all rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+                {current.url}
+              </code>
+              <Button className="shrink-0" onClick={() => copyLink(current.url)}>
+                {copied ? <Check size={13} /> : <Copy size={13} />}
+                {copied ? 'Copied' : 'Copy link'}
+              </Button>
+            </div>
+            {status.addresses.length > 1 && (
+              <select
+                value={addrIndex}
+                onChange={(e) => setAddrIndex(Number(e.target.value))}
+                className={`${inputClass} mt-2`}
+              >
+                {status.addresses.map((a, i) => (
+                  <option key={a.address} value={i}>
+                    {a.iface} — {a.address}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        </div>
+      )}
+
+      {status.running && status.addresses.length === 0 && (
+        <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50/60 p-3.5 dark:border-amber-900/50 dark:bg-amber-950/20">
+          <Wifi size={14} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <p className="text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-300">
+            No LAN network found — connect this computer to Wi-Fi or Ethernet, then refresh.
+          </p>
+        </div>
+      )}
+
+      {status.enabled && (
+        <div className="rounded-xl border border-zinc-200 p-3.5 dark:border-zinc-800">
+          <p className="text-[13px] font-medium text-zinc-800 dark:text-zinc-100">
+            Pairing token
+          </p>
+          <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-400">
+            Anyone on your network who has this link can read your terminals' output. Keep the QR
+            code private. Regenerating the token disconnects every paired phone.
+          </p>
+          <div className="mt-2.5">
+            {confirming ? (
+              <div className="flex items-center gap-2">
+                <Button variant="danger" disabled={regenerating} onClick={regenerate}>
+                  {regenerating && <Loader2 size={13} className="animate-spin" />}
+                  Yes, regenerate
+                </Button>
+                <Button onClick={() => setConfirming(false)}>Cancel</Button>
+              </div>
+            ) : (
+              <Button variant="danger" onClick={() => setConfirming(true)}>
+                <KeyRound size={13} />
+                Regenerate token…
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
+      <p className="text-[11px] leading-relaxed text-zinc-400">
+        If your phone can't connect, allow incoming connections for Delta-V in your OS firewall.
+        Delta-V itself must stay open and awake while you watch.
+      </p>
     </section>
   )
 }

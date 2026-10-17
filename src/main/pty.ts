@@ -50,6 +50,16 @@ class PtyManager extends EventEmitter {
   }
 
   /**
+   * Single choke point: renderer windows (setBroadcast) and in-process
+   * subscribers (the remote bridge, via the 'broadcast' event) both get every
+   * event.
+   */
+  private publish(channel: string, payload: unknown): void {
+    this.broadcast(channel, payload)
+    this.emit('broadcast', channel, payload)
+  }
+
+  /**
    * Spawn an agent terminal for a repo tile.
    * Mode resolution: explicit request.mode > settings.windowMode > 'tab'.
    */
@@ -99,7 +109,7 @@ class PtyManager extends EventEmitter {
         this.broadcastStatus(session, 'ready')
       }
       this.handleData(session, data)
-      this.broadcast(IPC.terminalData, { sessionId, data })
+      this.publish(IPC.terminalData, { sessionId, data })
     })
 
     pty.onExit(({ exitCode, signal }) => {
@@ -110,7 +120,7 @@ class PtyManager extends EventEmitter {
         exitCode,
         signal: signal === undefined ? undefined : String(signal)
       }
-      this.broadcast(IPC.terminalExit, evt)
+      this.publish(IPC.terminalExit, evt)
     })
 
     if (tile) {
@@ -119,7 +129,7 @@ class PtyManager extends EventEmitter {
       // enabled and missing or stale. Never blocks the spawn.
       repoIndexService.onRepoOpened(tile)
       // Other windows should refresh their grid (recent badge/sort)
-      this.broadcast(IPC.gridInvalidate, { reason: 'repo-opened', tileId: tile.id })
+      this.publish(IPC.gridInvalidate, { reason: 'repo-opened', tileId: tile.id })
     }
 
     // Windows mode is owned by a dedicated terminal window: the IPC handler
@@ -196,6 +206,7 @@ class PtyManager extends EventEmitter {
     const r = Math.floor(rows)
     session.info.cols = c
     session.info.rows = r
+    this.emit('resized', { ...session.info })
     try {
       session.pty.resize(c, r)
     } catch {
@@ -215,7 +226,7 @@ class PtyManager extends EventEmitter {
   /** Set a session's boot state in main + broadcast it to every window. */
   private broadcastStatus(session: Session, status: TerminalBootState): void {
     session.info.status = status
-    this.broadcast(IPC.terminalStatus, { sessionId: session.info.id, status })
+    this.publish(IPC.terminalStatus, { sessionId: session.info.id, status })
   }
 
   private clearStall(session: Session): void {
@@ -281,7 +292,7 @@ class PtyManager extends EventEmitter {
       if (!(isGenericAgentTitle && hasDescriptiveTitle)) {
         session.info.title = title
         const evt: TerminalTitleEvent = { sessionId: session.info.id, title }
-        this.broadcast(IPC.terminalTitle, evt)
+        this.publish(IPC.terminalTitle, evt)
       }
     }
   }
