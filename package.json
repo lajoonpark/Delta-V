@@ -1,6 +1,6 @@
 {
   "name": "deltav",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Repo terminal launcher for coding agents",
   "main": "./out/main/index.js",
   "author": "Delta-V",
