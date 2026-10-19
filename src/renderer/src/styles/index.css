@@ -105,13 +105,16 @@
   }
 }
 
-/* Stage → terminal launch black curtain: stays clear during planet recenter and
-   the lander's rise, then fades to true black as the lander crashes onto the
-   planet surface (the impact burst reads at the top of the ramp), holds while
-   the stage unmounts behind black, then lifts onto the terminal. */
+/* Stage → terminal launch black curtain. Stays clear through the recenter, the
+   lander's rise and the whole crash (the strike lands at ~60% of the dive, and
+   the explosion, shake and debris play out from there), then fades to true
+   black over the aftermath, holds while the stage unmounts behind black, and
+   lifts onto the terminal. The ramp is timed against LAUNCH_CINEMATIC_MS
+   (2000ms): clear to 74%, full black from 80% — just before the stage unmounts
+   at 1600ms. Keep this in sync with LAUNCH_IMPACT_T in art/cameraDolly.ts. */
 @keyframes launch-black {
   0%,
-  68% {
+  74% {
     opacity: 0;
   }
   80%,

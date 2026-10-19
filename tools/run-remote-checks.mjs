@@ -1,5 +1,6 @@
-// Bundles and runs the Delta-V Remote check scripts. They import the `@shared`
-// alias, so they must be bundled with esbuild before they run under Node.
+// Bundles and runs the Delta-V check scripts. They import the `@shared` /
+// `@renderer` aliases, so they must be bundled with esbuild before they run
+// under Node.
 // Cross-platform: uses esbuild's API (esbuild ships as a transitive dependency
 // of vite) plus os.tmpdir() - no shell, no hard-coded paths.
 import { build } from 'esbuild'
@@ -10,7 +11,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const checks = ['remote-bridge-check', 'remote-client-pure-check', 'remote-client-check']
+const checks = ['crash-fx-check', 'remote-bridge-check', 'remote-client-pure-check', 'remote-client-check']
 const outDir = mkdtempSync(join(tmpdir(), 'deltav-remote-checks-'))
 let failed = false
 
@@ -22,7 +23,10 @@ try {
       bundle: true,
       format: 'cjs',
       platform: 'node',
-      alias: { '@shared': resolve(root, 'src', 'shared') },
+      alias: {
+        '@shared': resolve(root, 'src', 'shared'),
+        '@renderer': resolve(root, 'src', 'renderer', 'src')
+      },
       outfile,
       logLevel: 'warning'
     })

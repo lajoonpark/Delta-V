@@ -173,11 +173,15 @@ export const LAUNCH_DURATION_FLOOR_MS = 250
 
 /**
  * Normalized dive progress at which the hero lander strikes the planet's near
- * surface. The lander holds this pose (and the burst fires) for the rest of the
- * dive, while the black curtain closes over the impact. Chosen so the impact
- * lands just as `launch-black` starts to ramp (see styles/index.css).
+ * surface. The lander holds this pose (and the crash FX fire) for the rest of
+ * the dive, while the black curtain closes over the aftermath. Set well before
+ * the curtain ramp (see styles/index.css) so the explosion, shake and debris
+ * all get room to play before the frame goes black.
  */
-export const LAUNCH_IMPACT_T = 0.84
+export const LAUNCH_IMPACT_T = 0.6
+
+/** Dive progress at which the fall starts (the lander leaves its rise). */
+export const LAUNCH_FLIGHT_START = 0.08
 
 /**
  * The stage → terminal launch cinematic runs at a fixed 2000ms duration when
@@ -231,6 +235,12 @@ export interface LaunchStepPose {
    * ramps to 1 by the end of the dive. Drives the crash flash + shock ring.
    */
   impact: number
+  /**
+   * How far into the fall the lander is, 0 (still rising) → 1 (at the strike).
+   * The dive-look FX (radial blur, speed lines) ramp on this, so they peak
+   * exactly as the lander arrives and stop the instant it touches down.
+   */
+  dive: number
   /** Camera world position (starts at (0, 0, camZ), pushes in — stays outside). */
   cameraPosition: Vec3
   /** Camera lookAt target in world space (settles onto the crash site). */
@@ -269,7 +279,7 @@ export function solveLaunchStep(input: LaunchStepInput): LaunchStepPose {
   }
 
   // Hero lander crash-dive cubic Bézier (rise t in [0.08, IMPACT], hold after).
-  const flightStart = 0.08
+  const flightStart = LAUNCH_FLIGHT_START
   const flightSpan = Math.max(1e-3, LAUNCH_IMPACT_T - flightStart)
   const flightRaw = Math.min(1, Math.max(0, (t - flightStart) / flightSpan))
   const s = easeInOut(flightRaw)
@@ -323,6 +333,10 @@ export function solveLaunchStep(input: LaunchStepInput): LaunchStepPose {
     Math.max(0, (t - LAUNCH_IMPACT_T) / Math.max(1e-3, 1 - LAUNCH_IMPACT_T))
   )
 
+  // Dive progress for the speed FX: 0 through the rise, 1 exactly at the
+  // strike. Deliberately NOT eased — the blur should track raw closing speed.
+  const dive = flightRaw
+
   // Camera push-in toward the crash (t in [0.18, IMPACT]); it settles outside
   // the planet and holds through the impact — it never enters the mesh.
   const camRaw = Math.min(1, Math.max(0, (t - 0.18) / Math.max(1e-3, LAUNCH_IMPACT_T - 0.18)))
@@ -357,6 +371,7 @@ export function solveLaunchStep(input: LaunchStepInput): LaunchStepPose {
     landerThrust,
     slotLandersOpacity,
     impact,
+    dive,
     cameraPosition,
     cameraTarget
   }
