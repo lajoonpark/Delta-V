@@ -22,6 +22,12 @@ export interface LanderBuild {
   setAppearance(opacity: number, selectMix: number, showRing?: boolean): void
   /** Set thruster plume intensity (0..1) during the fly-up entrance (0 hides flame). */
   setThrust(thrust: number, pulse?: number): void
+  /**
+   * Battle damage 0..1 for the crash cinematic: the hull soots over, panel
+   * emissives die back and the beacon gutters. Purely additive — at 0 the
+   * vehicle is byte-for-byte the undamaged build, so slot landers never change.
+   */
+  setDamage(damage: number, time: number): void
   dispose(): void
 }
 
@@ -435,6 +441,24 @@ export function buildLander(seed: string): LanderBuild {
     coreMat.opacity = 0.92 * t
   }
 
+  // Battle damage for the crash: soot darkens the hull, the panel emissives
+  // die back, and the beacon/cockpit light gutters out. Applied as a delta on
+  // top of `setAppearance`, so the two compose and a damage of 0 is a no-op.
+  const soot = new THREE.Color(0x1a1712)
+  const setDamage = (damage: number, time: number): void => {
+    const dmg = Math.max(0, Math.min(1, damage))
+    if (dmg <= 0) return
+    for (const entry of matEntries) {
+      const mat = entry.mat
+      mat.color.lerp(soot, dmg * 0.55)
+      mat.emissiveIntensity *= 1 - dmg * 0.72
+    }
+    // The beacon and cockpit bleed light as the hull buckles. Emissive only —
+    // opacity stays owned by `setAppearance` so the reveal fade still works.
+    const flicker = 0.35 + 0.65 * Math.abs(Math.sin(time * 5.3) * Math.sin(time * 1.7))
+    windowMat.emissiveIntensity = 0.72 * (1 - dmg * 0.5) + dmg * flicker * 0.5
+  }
+
   // Deterministic idle motion (bob + yaw wobble phases, readable 3/4 pose).
   const yawSign = rnd() < 0.5 ? -1 : 1
   const restingYaw = yawSign * (0.32 + rnd() * 0.22)
@@ -448,6 +472,7 @@ export function buildLander(seed: string): LanderBuild {
     wobblePhase,
     setAppearance,
     setThrust,
+    setDamage,
     dispose() {
       for (const g of geos) g.dispose()
       for (const m of materials) m.dispose()

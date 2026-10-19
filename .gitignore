@@ -17,3 +17,6 @@ assets/production/*
 .ori/
 vibe_images/
 assets/icon-concepts/
+
+# Deterministic crash-cinematic render harness (local verification only).
+.crash-harness/

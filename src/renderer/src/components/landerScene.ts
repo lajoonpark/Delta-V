@@ -9,6 +9,10 @@
  * lighting, never baked in.
  */
 import * as THREE from 'three'
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 import {
   colorRamp,
   getPlanetEquirect,
@@ -20,6 +24,9 @@ import {
 import { buildLander, type LanderBuild } from '@renderer/art/lander3d'
 import type { LanderStageLayout } from '@renderer/art/landerLayout'
 import { LAUNCH_DIVE_MS, solveLaunchStep } from '@renderer/art/cameraDolly'
+import { buildCrashField } from '@renderer/art/crash3d'
+import { crashFxSeed, solveCrashFx } from '@renderer/art/crashFx'
+import { createCrashPass } from '@renderer/art/crashPass'
 
 export interface LanderSceneOptions {
   canvas: HTMLCanvasElement
@@ -62,10 +69,15 @@ export function mountLanderScene(opts: LanderSceneOptions): LanderSceneHandle {
   const durationMs = reducedMotion ? 0 : Math.max(0, opts.durationMs)
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
-  renderer.setClearColor(0x090b10, 1)
+  // Backdrop as a scene colour, not a clear colour: the post chain ends in
+  // an sRGB `OutputPass`, and three writes a clear colour already encoded into
+  // the render target, so a non-black clear would get encoded twice and the
+  // whole backdrop would wash out. `scene.background` round-trips correctly.
+  renderer.setClearColor(0x000000, 1)
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
 
   const scene = new THREE.Scene()
+  scene.background = new THREE.Color(0x090b10)
   const camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 100)
   camera.position.z = CAM_Z
 
@@ -155,31 +167,42 @@ export function mountLanderScene(opts: LanderSceneOptions): LanderSceneHandle {
     }
   })
 
-  // Impact burst — a white-hot flash plus an expanding surface shock ring, fired
-  // the instant the hero lander strikes the planet (`step.impact`). Additive and
-  // depth-write-free, so it reads as light, not geometry.
-  const burst = new THREE.Group()
-  burst.visible = false
-  scene.add(burst)
-  const burstFlashMat = new THREE.MeshBasicMaterial({
-    color: 0xfff2d8,
-    transparent: true,
-    opacity: 0,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false
+  // Post-processing chain. The composer runs the whole time (so the resting
+  // stage is bit-identical to before — all three passes are no-ops at rest),
+  // and the crash pass + bloom only bite during the launch dive.
+  //
+  // MSAA lives on the composer's own render target: the default composer target
+  // has no multisampling, and the resting stage's planet limb would jag.
+  const renderTarget = new THREE.WebGLRenderTarget(1, 1, {
+    type: THREE.HalfFloatType,
+    samples: 4
   })
-  const burstFlash = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), burstFlashMat)
-  burst.add(burstFlash)
-  const burstRingMat = new THREE.MeshBasicMaterial({
-    color: 0xffab5e,
-    transparent: true,
-    opacity: 0,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    side: THREE.DoubleSide
-  })
-  const burstRing = new THREE.Mesh(new THREE.RingGeometry(0.62, 1, 48), burstRingMat)
-  burst.add(burstRing)
+  const composer = new EffectComposer(renderer, renderTarget)
+  const renderPass = new RenderPass(scene, camera)
+  composer.addPass(renderPass)
+  const crashPass = createCrashPass()
+  crashPass.pass.enabled = false
+  composer.addPass(crashPass.pass)
+  // Threshold sits just above the planet's lit surfaces, so at rest the bloom
+  // contributes nothing and only the (additive) blast goes over the line.
+  // Strength is modest: the blast is a lot of already-additive geometry, and
+  // bloom on top of it saturates to flat white instead of glowing.
+  const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.42, 0.55, 0.95)
+  bloom.enabled = false
+  composer.addPass(bloom)
+  const outputPass = new OutputPass()
+  composer.addPass(outputPass)
+
+  // Crash FX — the explosion's meshes, rebuilt per launch. Local frame: the
+  // group sits at the crash site with +Z along the surface normal.
+  let crashField: ReturnType<typeof buildCrashField> | null = null
+
+  // Scratch vectors reused across frames (the frame loop must not allocate).
+  const shakeOffset = new THREE.Vector3()
+  const cameraRight = new THREE.Vector3()
+  const cameraUp = new THREE.Vector3()
+  const focusProj = new THREE.Vector3()
+  const zAxis = new THREE.Vector3(0, 0, 1)
 
   let selected = -1
   let visibleMask: boolean[] = landers.map(() => true)
@@ -198,10 +221,23 @@ export function mountLanderScene(opts: LanderSceneOptions): LanderSceneHandle {
     startedAt: number
     durationMs: number
     hero: LanderBuild
+    /** Own FX RNG stream — the blast must not perturb the other landers. */
+    rnd: () => number
+    /** True once the blast has been armed at the strike. */
+    armed: boolean
   } | null = null
 
   const clearLaunchHero = (): void => {
-    burst.visible = false
+    if (crashField) {
+      scene.remove(crashField.group)
+      crashField.dispose()
+      crashField = null
+    }
+    crashPass.pass.enabled = false
+    bloom.enabled = false
+    crashPass.uniforms.radialBlur.value = 0
+    crashPass.uniforms.speedLines.value = 0
+    crashPass.uniforms.wash.value = 0
     if (!launchState) return
     scene.remove(launchState.hero.group)
     launchState.hero.dispose()
@@ -210,6 +246,9 @@ export function mountLanderScene(opts: LanderSceneOptions): LanderSceneHandle {
 
   const applySize = (): void => {
     renderer.setSize(layout.width, layout.height, false)
+    composer.setSize(layout.width, layout.height)
+    crashPass.setSize(layout.width, layout.height)
+    bloom.setSize(layout.width, layout.height)
     camera.aspect = layout.width / Math.max(1, layout.height)
     camera.updateProjectionMatrix()
     if (!launchState) {
@@ -278,16 +317,54 @@ export function mountLanderScene(opts: LanderSceneOptions): LanderSceneHandle {
         step.landerPosition.y,
         step.landerPosition.z
       )
+
+      // ── Crash FX ────────────────────────────────────────────────────────
+      // Age is 0 at the strike and 1 at the end of the dive; the solver turns
+      // it into every envelope the blast, the shake and the frame look need.
+      const fx = solveCrashFx({
+        age: step.impact,
+        travelBlend: step.dive,
+        landerRadius: heroBase * 0.42,
+        cameraDistance:
+          camera.position.distanceTo(
+            shakeOffset.set(step.landerPosition.x, step.landerPosition.y, step.landerPosition.z)
+          ) / Math.max(1e-3, step.planetRadius),
+        rnd: launch.rnd
+      })
+
+      // Arm the blast on the first frame it exists, so the debris field is
+      // sampled exactly once and then only integrated.
+      if (step.impact > 0 && !launch.armed && crashField) {
+        launch.armed = true
+        crashField.arm()
+      }
+
       launch.hero.group.scale.setScalar(heroBase)
+      // Recoil: squash-and-stretch plus a decaying rattle on the crash pose.
+      launch.hero.group.scale.y *= fx.landerSquash
       launch.hero.group.rotation.set(
-        step.landerPitchX,
+        step.landerPitchX + fx.landerRattle,
         launch.hero.restingYaw * step.landerYawMix,
         0
       )
       launch.hero.setAppearance(step.landerOpacity, 1, false)
       const pulse = 0.88 + 0.12 * Math.sin(now * 0.055)
       launch.hero.setThrust(step.landerThrust, pulse)
+      launch.hero.setDamage(fx.damage, now / 1000)
 
+      // Place and orient the blast: at the crash site, +Z along the surface
+      // normal so the rings/column/dust lie in the tangent plane.
+      if (crashField) {
+        crashField.group.position.copy(launch.hero.group.position)
+        const normal = crashField.group.position
+        if (normal.lengthSq() > 1e-6) {
+          crashField.group.quaternion.setFromUnitVectors(zAxis, normal.clone().normalize())
+        }
+        crashField.update(fx)
+      }
+
+      // Camera push-in toward the crash (t in [0.18, IMPACT]); it settles outside
+      // the planet and holds through the impact — it never enters the mesh.
       camera.position.set(
         step.cameraPosition.x,
         step.cameraPosition.y,
@@ -295,31 +372,44 @@ export function mountLanderScene(opts: LanderSceneOptions): LanderSceneHandle {
       )
       camera.lookAt(step.cameraTarget.x, step.cameraTarget.y, step.cameraTarget.z)
 
-      // Impact burst: sit at the crash site, ring laid in the surface tangent
-      // plane (normal = radial), flash billboarded as a sphere. Both envelope
-      // off `step.impact` (0 before the strike → 1 at the end of the dive).
-      const b = step.impact
-      if (b > 0) {
-        burst.visible = true
-        burst.position.set(
-          step.landerPosition.x,
-          step.landerPosition.y,
-          step.landerPosition.z
+      // Shake in the camera's own screen plane (right/up), so the whole frame
+      // punches without the camera ever moving toward the planet. `shakeAmp`
+      // is a fraction of the view's half-height, so it is converted to world
+      // units through the same projection the rest of the scene uses —
+      // scaling it by the pixel height instead throws the camera off the set.
+      if (fx.shakeAmp > 1e-5) {
+        cameraRight.set(1, 0, 0).applyQuaternion(camera.quaternion)
+        cameraUp.set(0, 1, 0).applyQuaternion(camera.quaternion)
+        const focusDist = camera.position.distanceTo(
+          shakeOffset.set(step.landerPosition.x, step.landerPosition.y, step.landerPosition.z)
         )
-        const normal = burst.position.clone()
-        if (normal.lengthSq() > 1e-6) {
-          normal.normalize()
-          burstRing.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal)
-        }
-        burstFlash.scale.setScalar(step.planetRadius * (0.3 + 0.5 * b))
-        burstFlashMat.opacity = 0.95 * Math.pow(1 - b, 2)
-        burstRing.scale.setScalar(step.planetRadius * (0.25 + 1.2 * b))
-        burstRingMat.opacity = 0.8 * (1 - b)
-      } else {
-        burst.visible = false
+        const amp = fx.shakeAmp * Math.tan((FOV * Math.PI) / 360) * focusDist
+        // Two frequencies per axis so the ring-down never looks like a sine.
+        const sx = Math.sin(fx.shakePhase) * 0.6 + Math.sin(fx.shakePhase * 2.37) * 0.4
+        const sy = Math.cos(fx.shakePhase * 1.19) * 0.6 + Math.cos(fx.shakePhase * 3.1) * 0.4
+        camera.position.addScaledVector(cameraRight, sx * amp)
+        camera.position.addScaledVector(cameraUp, sy * amp)
       }
 
-      renderer.render(scene, camera)
+      // Frame look: radial blur + speed lines through the fall, flash wash and
+      // bloom at the strike. The pass is centred on the impact in screen space.
+      const wantLook = fx.radialBlur > 0.001 || fx.speedLines > 0.001 || fx.wash > 0.001
+      crashPass.pass.enabled = wantLook
+      if (wantLook) {
+        // Project the blast to uv through the (post-shake) view-projection, so
+        // the blur rays and spokes stay pinned to the crash site.
+        camera.updateMatrixWorld()
+        focusProj.copy(crashField ? crashField.group.position : launch.hero.group.position)
+        focusProj.project(camera)
+        crashPass.uniforms.focus.value.set(focusProj.x * 0.5 + 0.5, focusProj.y * 0.5 + 0.5)
+        crashPass.uniforms.radialBlur.value = fx.radialBlur
+        crashPass.uniforms.speedLines.value = fx.speedLines
+        crashPass.uniforms.wash.value = fx.wash
+        crashPass.uniforms.time.value = now / 1000
+      }
+      bloom.enabled = fx.fireball > 0.001 || fx.flash > 0.001 || fx.ember > 0.001
+
+      composer.render()
       return
     }
 
@@ -396,7 +486,7 @@ export function mountLanderScene(opts: LanderSceneOptions): LanderSceneHandle {
 
       actor.built.group.scale.setScalar(base * (0.35 + 0.65 * e) * actor.scale)
     }
-    renderer.render(scene, camera)
+    composer.render()
   }
 
   applySize()
@@ -431,7 +521,23 @@ export function mountLanderScene(opts: LanderSceneOptions): LanderSceneHandle {
       hero.setAppearance(0, 1, false)
       hero.setThrust(0)
       scene.add(hero.group)
-      launchState = { selectedIndex: idx, startedAt: performance.now(), durationMs, hero }
+
+      // The blast sizes itself off the hero's own footprint, so it scales with
+      // the slot size we will fly at.
+      const slotSize =
+        layout.slots[idx]?.size ??
+        Math.max(56, Math.min(132, Math.min(layout.width, layout.height) * 0.12))
+      crashField = buildCrashField({ seed, landerRadius: slotSize * wpp() * 0.42 })
+      scene.add(crashField.group)
+
+      launchState = {
+        selectedIndex: idx,
+        startedAt: performance.now(),
+        durationMs,
+        hero,
+        rnd: mulberry32(crashFxSeed(seed, idx)),
+        armed: false
+      }
     },
     abortLaunch() {
       clearLaunchHero()
@@ -453,10 +559,11 @@ export function mountLanderScene(opts: LanderSceneOptions): LanderSceneHandle {
         ringMesh.geometry.dispose()
         ;(ringMesh.material as THREE.Material).dispose()
       }
-      burstFlash.geometry.dispose()
-      burstFlashMat.dispose()
-      burstRing.geometry.dispose()
-      burstRingMat.dispose()
+      crashPass.dispose()
+      bloom.dispose()
+      outputPass.dispose()
+      renderTarget.dispose()
+      composer.dispose()
       for (const actor of landers) actor.built.dispose()
       renderer.dispose()
     }
